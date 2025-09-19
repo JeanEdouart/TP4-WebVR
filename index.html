@@ -84,7 +84,7 @@
             const step = 0.05 * speed; // facteur d'échelle
 
             // Déplacement relatif (avant/arrière = -dy)
-            rigPos.addScaledVector(forward, -dy * step);
+            rigPos.addScaledVector(forward, dy * step);
             rigPos.addScaledVector(right, dx * step);
           });
         }
