@@ -8,44 +8,50 @@
     <!-- A-Frame 1.7.0 -->
     <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
 
-    <!-- Évite le conflit de nom 'grabbable' (A-Frame ≥1.5) -->
-    <script> delete AFRAME.components["grabbable"]; </script>
+    <!-- A-Frame 1.5+ : éviter le conflit de nom "grabbable" -->
+    <script> delete AFRAME.components["grabbable"]; </script> <!-- cf. super-hands -->
 
     <!-- aframe-extras (sphere-collider) -->
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.2/dist/aframe-extras.min.js"></script>
 
-    <!-- Physics system MAINTENU (c-frame) -->
+    <!-- Physics system (CANNON/Ammo support) -->
     <script src="https://cdn.jsdelivr.net/npm/@c-frame/aframe-physics-system@4.1.0/dist/aframe-physics-system.min.js"></script>
 
     <!-- super-hands 3.x -->
     <script src="https://unpkg.com/super-hands@3.0.5/dist/super-hands.min.js"></script>
 
+    <!-- Tes composants de déplacement -->
     <script>
-      /* Déplacement joystick gauche */
+      // Déplacement joystick gauche
       AFRAME.registerComponent('joystick-movement', {
         schema: { speed: { type: 'number', default: 2 } },
         init: function () {
           const rig = document.querySelector('#rig');
           const head = document.querySelector('#head');
           const leftHand = document.querySelector('#leftHand');
-          const DEADZONE = 0.1, speed = this.data.speed;
+          const speed = this.data.speed;
+          const DEADZONE = 0.1;
 
           leftHand.addEventListener('thumbstickmoved', function (evt) {
             const dx = evt.detail.x, dy = evt.detail.y;
             if (Math.abs(dx) < DEADZONE && Math.abs(dy) < DEADZONE) return;
 
-            const fwd = new THREE.Vector3(); head.object3D.getWorldDirection(fwd);
-            fwd.y = 0; fwd.normalize();
-            const right = new THREE.Vector3(); right.crossVectors(fwd, new THREE.Vector3(0,1,0)).negate();
+            const forward = new THREE.Vector3();
+            head.object3D.getWorldDirection(forward);
+            forward.y = 0; forward.normalize();
 
-            const step = 0.05 * speed, p = rig.object3D.position;
-            p.addScaledVector(fwd, dy * step);
-            p.addScaledVector(right, dx * step);
+            const right = new THREE.Vector3();
+            right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).negate();
+
+            const step = 0.05 * speed;
+            const rigPos = rig.object3D.position;
+            rigPos.addScaledVector(forward, dy * step);
+            rigPos.addScaledVector(right,  dx * step);
           });
         }
       });
 
-      /* Snap turn joystick droit */
+      // Rotation par crans (joystick droit)
       AFRAME.registerComponent('snap-turn', {
         schema: { angle: { type: 'number', default: 30 }, cooldown: { type: 'number', default: 300 } },
         init: function () {
@@ -57,92 +63,11 @@
             const now = Date.now(), x = evt.detail.x;
             if (Math.abs(x) < 0.8 || now - lastTurn < cooldown) return;
             const rad = THREE.MathUtils.degToRad(angle);
-            rig.object3D.rotation.y += (x < 0 ? rad : -rad);
+            if (x > 0.8)  rig.object3D.rotation.y -= rad;
+            else          rig.object3D.rotation.y += rad;
             lastTurn = now;
           });
         }
-      });
-
-      /* Composant 'gun' : tir au trigger (balle physique) */
-      AFRAME.registerComponent('gun', {
-        schema: {
-          bulletSpeed:  {type: 'number', default: 22},
-          bulletRadius: {type: 'number', default: 0.03},
-          bulletMass:   {type: 'number', default: 0.06},
-          cooldown:     {type: 'number', default: 120}
-        },
-        init: function () {
-          this.muzzleEl = this.el.querySelector('#muzzle');
-          this.holdingHand = null;
-          this._onTriggerDown = this._onTriggerDown.bind(this);
-          this._onGrabStart   = this._onGrabStart.bind(this);
-          this._onGrabEnd     = this._onGrabEnd.bind(this);
-          this.cooling = false;
-
-          this.el.addEventListener('grab-start', this._onGrabStart);
-          this.el.addEventListener('grab-end',   this._onGrabEnd);
-        },
-        remove: function () {
-          if (this.holdingHand) this.holdingHand.removeEventListener('triggerdown', this._onTriggerDown);
-          this.el.removeEventListener('grab-start', this._onGrabStart);
-          this.el.removeEventListener('grab-end',   this._onGrabEnd);
-        },
-        _onGrabStart: function (evt) {
-          this.holdingHand = evt.detail.hand;
-          this.holdingHand.addEventListener('triggerdown', this._onTriggerDown);
-        },
-        _onGrabEnd: function () {
-          if (this.holdingHand) this.holdingHand.removeEventListener('triggerdown', this._onTriggerDown);
-          this.holdingHand = null;
-        },
-        _onTriggerDown: function () {
-          if (this.cooling) return;
-          this.cooling = true;
-          this._fire();
-          setTimeout(() => { this.cooling = false; }, this.data.cooldown);
-        },
-        _fire: function () {
-          const sceneEl = this.el.sceneEl;
-          if (!sceneEl || !this.muzzleEl) return;
-
-          const muzzleWorld = new THREE.Vector3();
-          this.muzzleEl.object3D.getWorldPosition(muzzleWorld);
-
-          const dir = new THREE.Vector3();
-          this.el.object3D.getWorldDirection(dir); // -Z
-          dir.normalize();
-
-          const bullet = document.createElement('a-sphere');
-          bullet.setAttribute('radius', this.data.bulletRadius);
-          bullet.setAttribute('color', '#ddd');
-          bullet.setAttribute('position', `${muzzleWorld.x} ${muzzleWorld.y} ${muzzleWorld.z}`);
-          bullet.setAttribute('shadow', 'cast: true; receive: false');
-          bullet.setAttribute('dynamic-body',
-            `mass: ${this.data.bulletMass}; shape: sphere; linearDamping: 0.01; angularDamping: 0.01`);
-          sceneEl.appendChild(bullet);
-
-          const speed = this.data.bulletSpeed;
-          bullet.addEventListener('body-loaded', () => {
-            // léger décalage pour éviter collision immédiate avec l'arme
-            bullet.body.position.x += dir.x * (this.data.bulletRadius + 0.01);
-            bullet.body.position.y += dir.y * (this.data.bulletRadius + 0.01);
-            bullet.body.position.z += dir.z * (this.data.bulletRadius + 0.01);
-            // pas besoin de CANNON global : on utilise la Vec3 existante
-            bullet.body.velocity.set(dir.x * speed, dir.y * speed, dir.z * speed);
-          });
-
-          setTimeout(() => { if (bullet.parentNode) bullet.parentNode.removeChild(bullet); }, 5000);
-        }
-      });
-
-      /* Construire le body du pistolet APRÈS le chargement du modèle */
-      window.addEventListener('DOMContentLoaded', () => {
-        const gunEl = document.getElementById('gun');
-        gunEl.addEventListener('model-loaded', () => {
-          // re-définir le body sur l'entité qui PORTE le mesh
-          gunEl.setAttribute('dynamic-body',
-            'shape: box; mass: 1.2; linearDamping: 0.03; angularDamping: 0.03');
-        });
       });
     </script>
   </head>
@@ -153,70 +78,62 @@
       renderer="antialias: true"
       vr-mode-ui="enabled: true"
       device-orientation-permission-ui="enabled: true"
-      physics="driver: cannon; gravity: -9.8; debug: false"
+      physics="gravity: -9.8; debug: false"
     >
       <!-- Assets -->
       <a-assets>
         <img id="skyTexture" src="./skynet.jpg" />
         <img id="groundTexture" src="./grass.jpg" />
-        <a-asset-item id="pistol" src="./low-poly_simeon_north_model_1826.glb"></a-asset-item>
       </a-assets>
 
       <!-- Lumières -->
       <a-entity light="type: ambient; intensity: 0.4"></a-entity>
       <a-entity light="type: directional; intensity: 1; castShadow: true" position="2 4 -2"></a-entity>
 
-      <!-- RIG + mains -->
+      <!-- RIG + caméra + contrôleurs -->
       <a-entity id="rig" position="0 1 0" joystick-movement="speed: 2" snap-turn="angle: 30; cooldown: 300">
         <a-entity id="head" camera wasd-controls-enabled="false" look-controls></a-entity>
 
+        <!-- Mains : super-hands limité au bouton grip (side) + collision par sphère -->
         <a-entity id="leftHand"
           oculus-touch-controls="hand: left"
-          super-hands="grabStartButtons: gripdown; grabEndButtons: gripup"
+          super-hands="grabStartButtons: gripdown, squeezestart; grabEndButtons: gripup, squeezeend"
           sphere-collider="objects: .grabbable"
-          static-body="shape: sphere; sphereRadius: 0.035">
+          static-body="shape: sphere; sphereRadius: 0.03">
         </a-entity>
 
         <a-entity id="rightHand"
           oculus-touch-controls="hand: right"
-          super-hands="grabStartButtons: gripdown; grabEndButtons: gripup"
+          super-hands="grabStartButtons: gripdown, squeezestart; grabEndButtons: gripup, squeezeend"
           sphere-collider="objects: .grabbable"
-          static-body="shape: sphere; sphereRadius: 0.035">
+          static-body="shape: sphere; sphereRadius: 0.03">
         </a-entity>
       </a-entity>
 
-      <!-- Sol -->
-      <a-plane position="0 0 -1" rotation="-90 0 0" width="100" height="100"
-               src="#groundTexture" shadow="cast: false; receive: true" static-body></a-plane>
-
-      <!-- Objets test -->
+      <!-- OBJETS SAISISSABLES (physiques) -->
       <a-box class="grabbable" position="-1 0.6 -1.6" rotation="0 45 0" color="#4CC3D9"
              shadow="cast: true; receive: true"
-             grabbable="usePhysics: only; startButtons: gripdown; endButtons: gripup"
-             dynamic-body="mass: 1; shape: box"></a-box>
+             grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
+             dynamic-body="mass: 1; shape: box">
+      </a-box>
 
       <a-sphere class="grabbable" position="0 1.2 -2" radius="0.5" color="#EF2D5E"
                 shadow="cast: true; receive: true"
-                grabbable="usePhysics: only; startButtons: gripdown; endButtons: gripup"
-                dynamic-body="mass: 0.5; shape: sphere"></a-sphere>
+                grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
+                dynamic-body="mass: 0.5; shape: sphere">
+      </a-sphere>
 
       <a-cylinder class="grabbable" position="1 0.9 -2.4" radius="0.4" height="1" color="#FFC65D"
                   shadow="cast: true; receive: true"
-                  grabbable="usePhysics: only; startButtons: gripdown; endButtons: gripup"
-                  dynamic-body="mass: 0.75; shape: cylinder"></a-cylinder>
+                  grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
+                  dynamic-body="mass: 0.75; shape: cylinder">
+      </a-cylinder>
 
-      <!-- ARME (mesh + body sur la même entité) -->
-      <a-entity id="gun"
-        class="grabbable"
-        gltf-model="#pistol"
-        position="2 1 -1.5"
-        rotation="0 90 0"
-        scale="0.4 0.4 0.4"
-        shadow="cast: true; receive: true"
-        grabbable="usePhysics: only; startButtons: gripdown; endButtons: gripup"
-        gun="bulletSpeed: 22; bulletRadius: 0.03; bulletMass: 0.06; cooldown: 120">
-        <a-entity id="muzzle" position="0 0.143 -0.890"></a-entity>
-      </a-entity>
+      <!-- Sol -->
+      <a-plane position="0 0 -1" rotation="-90 0 0" width="100" height="100" src="#groundTexture"
+               shadow="cast: false; receive: true"
+               static-body>
+      </a-plane>
 
       <a-sky src="#skyTexture"></a-sky>
     </a-scene>
