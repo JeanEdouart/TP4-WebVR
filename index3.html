@@ -5,23 +5,23 @@
     <title>Exercice 3</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <!-- A-Frame -->
+    <!-- A-Frame 1.7.0 -->
     <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
 
-    <!-- Évite le conflit du nom 'grabbable' (A-Frame ≥1.5) -->
+    <!-- Éviter le conflit du nom 'grabbable' (A-Frame ≥1.5) -->
     <script> delete AFRAME.components["grabbable"]; </script>
 
-    <!-- Colliders utilitaires -->
+    <!-- aframe-extras (pour sphere-collider) -->
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.2/dist/aframe-extras.min.js"></script>
 
-    <!-- Physique (CANNON) -->
-    <script src="https://cdn.jsdelivr.net/npm/@c-frame/aframe-physics-system@4.1.0/dist/aframe-physics-system.min.js"></script>
+    <!-- Physics system (CANNON) — VERSION STABLE -->
+    <script src="https://cdn.jsdelivr.net/npm/aframe-physics-system@4.1.0/dist/aframe-physics-system.min.js"></script>
 
     <!-- super-hands -->
     <script src="https://unpkg.com/super-hands@3.0.5/dist/super-hands.min.js"></script>
 
     <script>
-      /* Déplacement / rotation (inchangé) */
+      /* Déplacement joystick gauche */
       AFRAME.registerComponent('joystick-movement', {
         schema: { speed: { type: 'number', default: 2 } },
         init: function () {
@@ -45,6 +45,7 @@
         }
       });
 
+      /* Snap turn joystick droit */
       AFRAME.registerComponent('snap-turn', {
         schema: { angle: { type: 'number', default: 30 }, cooldown: { type: 'number', default: 300 } },
         init: function () {
@@ -62,7 +63,7 @@
         }
       });
 
-      /* Composant 'gun' (tir au trigger) */
+      /* Composant 'gun' : tir au trigger (balle physique) */
       AFRAME.registerComponent('gun', {
         schema: {
           bulletSpeed:  {type: 'number', default: 22},
@@ -77,6 +78,7 @@
           this._onGrabStart   = this._onGrabStart.bind(this);
           this._onGrabEnd     = this._onGrabEnd.bind(this);
           this.cooling = false;
+
           this.el.addEventListener('grab-start', this._onGrabStart);
           this.el.addEventListener('grab-end',   this._onGrabEnd);
         },
@@ -132,13 +134,13 @@
         }
       });
 
-      /* IMPORTANT : construire le body du pistolet APRÈS le chargement du modèle */
+      /* IMPORTANT : créer le body du pistolet APRÈS le chargement du modèle */
       window.addEventListener('DOMContentLoaded', () => {
         const gunEl = document.getElementById('gun');
         gunEl.addEventListener('model-loaded', () => {
-          // Recrée une shape propre, à l’échelle, qui suit le mesh
+          // (re)définit le body sur l'entité QUI PORTE le mesh
           gunEl.setAttribute('dynamic-body',
-            'shape: hull; mass: 1.2; linearDamping: 0.03; angularDamping: 0.03');
+            'shape: box; mass: 1.2; linearDamping: 0.03; angularDamping: 0.03');
         });
       });
     </script>
@@ -152,6 +154,7 @@
       device-orientation-permission-ui="enabled: true"
       physics="driver: cannon; gravity: -9.8; debug: false"
     >
+      <!-- Assets -->
       <a-assets>
         <img id="skyTexture" src="./skynet.jpg" />
         <img id="groundTexture" src="./grass.jpg" />
@@ -162,7 +165,7 @@
       <a-entity light="type: ambient; intensity: 0.4"></a-entity>
       <a-entity light="type: directional; intensity: 1; castShadow: true" position="2 4 -2"></a-entity>
 
-      <!-- Rig + mains -->
+      <!-- RIG + mains -->
       <a-entity id="rig" position="0 1 0" joystick-movement="speed: 2" snap-turn="angle: 30; cooldown: 300">
         <a-entity id="head" camera wasd-controls-enabled="false" look-controls></a-entity>
 
@@ -181,7 +184,7 @@
         </a-entity>
       </a-entity>
 
-      <!-- Scène / sol -->
+      <!-- Sol -->
       <a-plane position="0 0 -1" rotation="-90 0 0" width="100" height="100"
                src="#groundTexture" shadow="cast: false; receive: true" static-body></a-plane>
 
@@ -201,7 +204,7 @@
                   grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
                   dynamic-body="mass: 0.75; shape: cylinder"></a-cylinder>
 
-      <!-- ARME (mesh + grabbable sur la même entité) -->
+      <!-- ARME (mesh + body sur la même entité) -->
       <a-entity id="gun"
         class="grabbable"
         gltf-model="#pistol"
@@ -211,7 +214,7 @@
         shadow="cast: true; receive: true"
         grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
         gun="bulletSpeed: 22; bulletRadius: 0.03; bulletMass: 0.06; cooldown: 120">
-        <a-entity id="muzzle" position="2.303 0.351 -0.003"></a-entity>
+        <a-entity id="muzzle" position="0 0.143 -0.890"></a-entity>
       </a-entity>
 
       <a-sky src="#skyTexture"></a-sky>
