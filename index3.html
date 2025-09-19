@@ -8,16 +8,16 @@
     <!-- A-Frame 1.7.0 -->
     <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
 
-    <!-- Éviter le conflit du nom 'grabbable' (A-Frame ≥1.5) -->
+    <!-- Évite le conflit de nom 'grabbable' (A-Frame ≥1.5) -->
     <script> delete AFRAME.components["grabbable"]; </script>
 
-    <!-- aframe-extras (pour sphere-collider) -->
+    <!-- aframe-extras (sphere-collider) -->
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.2/dist/aframe-extras.min.js"></script>
 
-    <!-- Physics system (CANNON) — VERSION STABLE -->
-    <script src="https://cdn.jsdelivr.net/npm/aframe-physics-system@4.1.0/dist/aframe-physics-system.min.js"></script>
+    <!-- Physics system MAINTENU (c-frame) -->
+    <script src="https://cdn.jsdelivr.net/npm/@c-frame/aframe-physics-system@4.1.0/dist/aframe-physics-system.min.js"></script>
 
-    <!-- super-hands -->
+    <!-- super-hands 3.x -->
     <script src="https://unpkg.com/super-hands@3.0.5/dist/super-hands.min.js"></script>
 
     <script>
@@ -123,22 +123,23 @@
 
           const speed = this.data.bulletSpeed;
           bullet.addEventListener('body-loaded', () => {
+            // léger décalage pour éviter collision immédiate avec l'arme
             bullet.body.position.x += dir.x * (this.data.bulletRadius + 0.01);
             bullet.body.position.y += dir.y * (this.data.bulletRadius + 0.01);
             bullet.body.position.z += dir.z * (this.data.bulletRadius + 0.01);
-            const v = new CANNON.Vec3(dir.x * speed, dir.y * speed, dir.z * speed);
-            bullet.body.velocity.set(v.x, v.y, v.z);
+            // pas besoin de CANNON global : on utilise la Vec3 existante
+            bullet.body.velocity.set(dir.x * speed, dir.y * speed, dir.z * speed);
           });
 
           setTimeout(() => { if (bullet.parentNode) bullet.parentNode.removeChild(bullet); }, 5000);
         }
       });
 
-      /* IMPORTANT : créer le body du pistolet APRÈS le chargement du modèle */
+      /* Construire le body du pistolet APRÈS le chargement du modèle */
       window.addEventListener('DOMContentLoaded', () => {
         const gunEl = document.getElementById('gun');
         gunEl.addEventListener('model-loaded', () => {
-          // (re)définit le body sur l'entité QUI PORTE le mesh
+          // re-définir le body sur l'entité qui PORTE le mesh
           gunEl.setAttribute('dynamic-body',
             'shape: box; mass: 1.2; linearDamping: 0.03; angularDamping: 0.03');
         });
@@ -171,14 +172,14 @@
 
         <a-entity id="leftHand"
           oculus-touch-controls="hand: left"
-          super-hands="grabStartButtons: gripdown, squeezestart; grabEndButtons: gripup, squeezeend"
+          super-hands="grabStartButtons: gripdown; grabEndButtons: gripup"
           sphere-collider="objects: .grabbable"
           static-body="shape: sphere; sphereRadius: 0.035">
         </a-entity>
 
         <a-entity id="rightHand"
           oculus-touch-controls="hand: right"
-          super-hands="grabStartButtons: gripdown, squeezestart; grabEndButtons: gripup, squeezeend"
+          super-hands="grabStartButtons: gripdown; grabEndButtons: gripup"
           sphere-collider="objects: .grabbable"
           static-body="shape: sphere; sphereRadius: 0.035">
         </a-entity>
@@ -191,17 +192,17 @@
       <!-- Objets test -->
       <a-box class="grabbable" position="-1 0.6 -1.6" rotation="0 45 0" color="#4CC3D9"
              shadow="cast: true; receive: true"
-             grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
+             grabbable="usePhysics: only; startButtons: gripdown; endButtons: gripup"
              dynamic-body="mass: 1; shape: box"></a-box>
 
       <a-sphere class="grabbable" position="0 1.2 -2" radius="0.5" color="#EF2D5E"
                 shadow="cast: true; receive: true"
-                grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
+                grabbable="usePhysics: only; startButtons: gripdown; endButtons: gripup"
                 dynamic-body="mass: 0.5; shape: sphere"></a-sphere>
 
       <a-cylinder class="grabbable" position="1 0.9 -2.4" radius="0.4" height="1" color="#FFC65D"
                   shadow="cast: true; receive: true"
-                  grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
+                  grabbable="usePhysics: only; startButtons: gripdown; endButtons: gripup"
                   dynamic-body="mass: 0.75; shape: cylinder"></a-cylinder>
 
       <!-- ARME (mesh + body sur la même entité) -->
@@ -212,7 +213,7 @@
         rotation="0 90 0"
         scale="0.4 0.4 0.4"
         shadow="cast: true; receive: true"
-        grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
+        grabbable="usePhysics: only; startButtons: gripdown; endButtons: gripup"
         gun="bulletSpeed: 22; bulletRadius: 0.03; bulletMass: 0.06; cooldown: 120">
         <a-entity id="muzzle" position="0 0.143 -0.890"></a-entity>
       </a-entity>
