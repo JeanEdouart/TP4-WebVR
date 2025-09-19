@@ -2,35 +2,83 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Exercice 2</title>
+    <title>VR – Grab & Release (Quest)</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <!-- A-Frame -->
+    <!-- A-Frame 1.7.0 -->
     <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
 
-    <!-- Physique (CANNON) -->
-    <script src="https://cdn.jsdelivr.net/npm/aframe-physics-system@4.0.1/dist/aframe-physics-system.min.js"></script>
+    <!-- IMPORTANT pour A-Frame 1.5+ : éviter le conflit de nom "grabbable" -->
+    <script> delete AFRAME.components["grabbable"]; </script> <!-- cf. doc super-hands -->
 
-    <!-- (Optionnel) extras pour sphere-collider -->
-    <script src="https://cdn.jsdelivr.net/npm/aframe-extras@6.1.1/dist/aframe-extras.min.js"></script>
+    <!-- aframe-extras 7.5.x (pour sphere-collider) -->
+    <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.2/dist/aframe-extras.min.js"></script>
 
-    <!-- Super Hands -->
-    <script src="https://unpkg.com/super-hands@2.0.1/dist/super-hands.min.js"></script>
+    <!-- Physics system 4.1.x (CANNON par défaut) -->
+    <script src="https://cdn.jsdelivr.net/npm/aframe-physics-system@4.1.0/dist/aframe-physics-system.min.js"></script>
+
+    <!-- super-hands 3.x (compatible A-Frame ≥ 1.4) -->
+    <script src="https://unpkg.com/super-hands@3.0.5/dist/super-hands.min.js"></script>
+
+    <!-- Tes composants de déplacement/rotation (déclarés AVANT la scène) -->
+    <script>
+      // Déplacement joystick gauche
+      AFRAME.registerComponent('joystick-movement', {
+        schema: { speed: { type: 'number', default: 2 } },
+        init: function () {
+          const rig = document.querySelector('#rig');
+          const head = document.querySelector('#head');
+          const leftHand = document.querySelector('#leftHand');
+          const speed = this.data.speed;
+          const DEADZONE = 0.1;
+
+          leftHand.addEventListener('thumbstickmoved', function (evt) {
+            const dx = evt.detail.x, dy = evt.detail.y;
+            if (Math.abs(dx) < DEADZONE && Math.abs(dy) < DEADZONE) return;
+
+            const forward = new THREE.Vector3();
+            head.object3D.getWorldDirection(forward);
+            forward.y = 0; forward.normalize();
+
+            const right = new THREE.Vector3();
+            right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).negate();
+
+            const step = 0.05 * speed;
+            const rigPos = rig.object3D.position;
+            rigPos.addScaledVector(forward, dy * step);   // avant/arrière
+            rigPos.addScaledVector(right,  dx * step);    // gauche/droite
+          });
+        }
+      });
+
+      // Snap turn joystick droit
+      AFRAME.registerComponent('snap-turn', {
+        schema: { angle: { type: 'number', default: 30 }, cooldown: { type: 'number', default: 300 } },
+        init: function () {
+          const rig = document.querySelector('#rig');
+          const rightHand = document.querySelector('#rightHand');
+          const angle = this.data.angle, cooldown = this.data.cooldown;
+          let lastTurn = 0;
+          rightHand.addEventListener('thumbstickmoved', function (evt) {
+            const now = Date.now(), x = evt.detail.x;
+            if (Math.abs(x) < 0.8 || now - lastTurn < cooldown) return;
+            const rad = THREE.MathUtils.degToRad(angle);
+            if (x > 0.8)  rig.object3D.rotation.y -= rad;
+            else          rig.object3D.rotation.y += rad;
+            lastTurn = now;
+          });
+        }
+      });
+    </script>
   </head>
-  <body>
-    <a href="index.html" style="
-        position: fixed; top: 15px; left: 15px; background: rgba(255,255,255,0.9);
-        color: #000; text-decoration: none; padding: 8px 14px; border-radius: 8px;
-        font-weight: bold; z-index: 9999; box-shadow: 0 2px 6px rgba(0,0,0,0.2);">
-      ⬅ Retour accueil
-    </a>
 
+  <body>
     <a-scene
       shadow="type: pcfsoft"
       renderer="antialias: true"
       vr-mode-ui="enabled: true"
       device-orientation-permission-ui="enabled: true"
-      physics="gravity: -9.8; debug: false"
+      physics="driver: cannon; gravity: -9.8; debug: false"
     >
       <!-- Assets -->
       <a-assets>
@@ -46,124 +94,48 @@
       <a-entity id="rig" position="0 1.6 0" joystick-movement="speed: 2" snap-turn="angle: 30; cooldown: 300">
         <a-entity id="head" camera wasd-controls-enabled="false" look-controls></a-entity>
 
-        <!-- MAIN GAUCHE : super-hands + détection de proximité -->
-        <a-entity
-          id="leftHand"
+        <!-- Mains : super-hands + sphere-collider + static-body (pour les contraintes) -->
+        <a-entity id="leftHand"
           oculus-touch-controls="hand: left"
-          super-hands="grabStartButtons: gripdown, triggerdown; grabEndButtons: gripup, triggerup"
+          super-hands
           sphere-collider="objects: .grabbable"
-        ></a-entity>
+          static-body="shape: sphere; sphereRadius: 0.03">
+        </a-entity>
 
-        <!-- MAIN DROITE : super-hands + détection de proximité -->
-        <a-entity
-          id="rightHand"
+        <a-entity id="rightHand"
           oculus-touch-controls="hand: right"
-          super-hands="grabStartButtons: gripdown, triggerdown; grabEndButtons: gripup, triggerup"
+          super-hands
           sphere-collider="objects: .grabbable"
-        ></a-entity>
+          static-body="shape: sphere; sphereRadius: 0.03">
+        </a-entity>
       </a-entity>
 
-      <!-- OBJETS SAISISSABLES (grabbable + dynamic-body) -->
-      <a-box
-        class="grabbable collidable"
-        position="-1 0.5 -1.5"
-        rotation="0 45 0"
-        color="#4CC3D9"
-        shadow="cast: true; receive: true"
-        grabbable
-        dynamic-body="mass: 1; shape: box"
-      ></a-box>
+      <!-- OBJETS SAISISSABLES -->
+      <a-box class="grabbable" position="-1 0.6 -1.6" rotation="0 45 0" color="#4CC3D9"
+             shadow="cast: true; receive: true"
+             grabbable
+             dynamic-body="mass: 1; shape: box">
+      </a-box>
 
-      <a-sphere
-        class="grabbable collidable"
-        position="0 1.2 -2"
-        radius="0.25"
-        color="#EF2D5E"
-        shadow="cast: true; receive: true"
-        grabbable
-        dynamic-body="mass: 0.5; shape: sphere"
-      ></a-sphere>
+      <a-sphere class="grabbable" position="0 1.2 -2" radius="0.25" color="#EF2D5E"
+                shadow="cast: true; receive: true"
+                grabbable
+                dynamic-body="mass: 0.5; shape: sphere">
+      </a-sphere>
 
-      <a-cylinder
-        class="grabbable collidable"
-        position="1 0.75 -2.5"
-        radius="0.2"
-        height="0.6"
-        color="#FFC65D"
-        shadow="cast: true; receive: true"
-        grabbable
-        dynamic-body="mass: 0.75; shape: cylinder"
-      ></a-cylinder>
+      <a-cylinder class="grabbable" position="1 0.9 -2.4" radius="0.2" height="0.6" color="#FFC65D"
+                  shadow="cast: true; receive: true"
+                  grabbable
+                  dynamic-body="mass: 0.75; shape: cylinder">
+      </a-cylinder>
 
-      <!-- Sol (statique, collision, reçoit les chutes) -->
-      <a-plane
-        position="0 0 -2"
-        rotation="-90 0 0"
-        width="100"
-        height="100"
-        src="#groundTexture"
-        class="collidable"
-        shadow="cast: false; receive: true"
-        static-body
-      ></a-plane>
+      <!-- Sol (collisions + gravité) -->
+      <a-plane position="0 0 -2" rotation="-90 0 0" width="100" height="100" src="#groundTexture"
+               shadow="cast: false; receive: true"
+               static-body>
+      </a-plane>
 
       <a-sky src="#skyTexture"></a-sky>
     </a-scene>
-
-    <script>
-      // Déplacement joystick gauche
-      AFRAME.registerComponent('joystick-movement', {
-        schema: { speed: { type: 'number', default: 2 } },
-        init: function () {
-          const rig = document.querySelector('#rig');
-          const head = document.querySelector('#head');
-          const leftHand = document.querySelector('#leftHand');
-          const speed = this.data.speed;
-          const DEADZONE = 0.1;
-
-          leftHand.addEventListener('thumbstickmoved', function (evt) {
-            const dx = evt.detail.x;
-            const dy = evt.detail.y;
-            if (Math.abs(dx) < DEADZONE && Math.abs(dy) < DEADZONE) return;
-
-            const forward = new THREE.Vector3();
-            head.object3D.getWorldDirection(forward);
-            forward.y = 0;
-            forward.normalize();
-
-            const right = new THREE.Vector3();
-            right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).negate();
-
-            const rigPos = rig.object3D.position;
-            const step = 0.05 * speed;
-
-            rigPos.addScaledVector(forward, dy * step);   // avant/arrière
-            rigPos.addScaledVector(right, dx * step);     // gauche/droite
-          });
-        }
-      });
-
-      // Snap turn joystick droit
-      AFRAME.registerComponent('snap-turn', {
-        schema: { angle: { type: 'number', default: 30 }, cooldown: { type: 'number', default: 300 } },
-        init: function () {
-          const rig = document.querySelector('#rig');
-          const rightHand = document.querySelector('#rightHand');
-          const angle = this.data.angle;
-          const cooldown = this.data.cooldown;
-          let lastTurn = 0;
-
-          rightHand.addEventListener('thumbstickmoved', function (evt) {
-            const now = Date.now();
-            const x = evt.detail.x;
-            if (Math.abs(x) < 0.8 || now - lastTurn < cooldown) return;
-
-            const rad = THREE.MathUtils.degToRad(angle);
-            if (x > 0.8) { rig.object3D.rotation.y -= rad; lastTurn = now; }
-            else if (x < -0.8) { rig.object3D.rotation.y += rad; lastTurn = now; }
-          });
-        }
-      });
-    </script>
   </body>
 </html>
