@@ -1,114 +1,129 @@
+<!DOCTYPE html>
 <html>
   <head>
     <meta charset="utf-8" />
+    <title>A-Frame – Rig + Joysticks (Quest)</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
   </head>
   <body>
-    <a-scene shadow="type: pcfsoft">
+    <a-scene
+      shadow="type: pcfsoft"
+      renderer="antialias: true"
+      vr-mode-ui="enabled: true"
+      device-orientation-permission-ui="enabled: true"
+    >
       <a-assets>
-        <img id="skyTexture" src="./skynet.jpg">
-        <img id="groundTexture" src="./grass.jpg">
+        <img id="skyTexture" src="./skynet.jpg" />
+        <img id="groundTexture" src="./grass.jpg" />
       </a-assets>
 
-      <a-entity light="type: ambient; intensity: 0.4;"></a-entity>
-      <a-entity 
-        light="type: directional; intensity: 1; castShadow: true" 
-        position="2 4 -2">
-      </a-entity>
+      <a-entity light="type: ambient; intensity: 0.4"></a-entity>
+      <a-entity light="type: directional; intensity: 1; castShadow: true" position="2 4 -2"></a-entity>
 
-      <a-entity id="rig" position="0 1.6 0">
+      <a-entity id="rig" position="0 1.6 0" joystick-movement="speed: 2" snap-turn="angle: 30; cooldown: 300">
         <a-entity id="head" camera wasd-controls-enabled="false" look-controls></a-entity>
-        <a-entity id="LeftHand" meta-touch-controls="hands:left"></a-entity>
-        <a-entity id="RightHand" meta-touch-controls="hands:right"></a-entity>
+
+        <a-entity
+          id="leftHand"
+          oculus-touch-controls="hand: left"
+          raycaster="objects: .collidable"
+        ></a-entity>
+
+        <a-entity
+          id="rightHand"
+          oculus-touch-controls="hand: right"
+          raycaster="objects: .collidable"
+        ></a-entity>
       </a-entity>
 
-      <a-box position="-1 0.5 -3" rotation="0 45 0" color="#4CC3D9"
-             shadow="cast: true; receive: true"></a-box>
-
-      <a-sphere position="0 1.25 -5" radius="1.25" color="#EF2D5E"
-                shadow="cast: true; receive: true"></a-sphere>
-
-      <a-cylinder position="1 0.75 -3" radius="0.5" height="1.5" color="#FFC65D"
-                  shadow="cast: true; receive: true"></a-cylinder>
-
-      <a-plane position="0 0 -4" rotation="-90 0 0" width="100" height="100"
-               src="#groundTexture"
-               shadow="cast: false; receive: true"></a-plane>
-
+      <a-box position="-1 0.5 -3" rotation="0 45 0" color="#4CC3D9" shadow="cast: true; receive: true"></a-box>
+      <a-sphere position="0 1.25 -5" radius="1.25" color="#EF2D5E" shadow="cast: true; receive: true"></a-sphere>
+      <a-cylinder position="1 0.75 -3" radius="0.5" height="1.5" color="#FFC65D" shadow="cast: true; receive: true"></a-cylinder>
+      <a-plane
+        position="0 0 -4"
+        rotation="-90 0 0"
+        width="100"
+        height="100"
+        src="#groundTexture"
+        class="collidable"
+        shadow="cast: false; receive: true"
+      ></a-plane>
       <a-sky src="#skyTexture"></a-sky>
     </a-scene>
+
+    <script>
+      // Déplacement avec le joystick gauche (avant/arrière/gauche/droite)
+      AFRAME.registerComponent('joystick-movement', {
+        schema: { speed: { type: 'number', default: 2 } },
+        init: function () {
+          const rig = document.querySelector('#rig');
+          const head = document.querySelector('#head');
+          const leftHand = document.querySelector('#leftHand');
+          const speed = this.data.speed;
+          const DEADZONE = 0.1;
+
+          // Événement natif A-Frame pour Quest/Touch
+          leftHand.addEventListener('thumbstickmoved', function (evt) {
+            const dx = evt.detail.x; // -1..1 gauche/droite
+            const dy = evt.detail.y; // -1..1 avant/arrière (avant = négatif)
+
+            if (Math.abs(dx) < DEADZONE && Math.abs(dy) < DEADZONE) return;
+
+            // Direction "forward" = direction de la tête projetée au sol
+            const forward = new THREE.Vector3();
+            head.object3D.getWorldDirection(forward);
+            forward.y = 0;
+            forward.normalize();
+
+            // Vecteur "right" = forward × up (et on inverse pour correspondre aux axes)
+            const right = new THREE.Vector3();
+            right.crossVectors(forward, new THREE.Vector3(0, 1, 0)).negate();
+
+            const rigPos = rig.object3D.position;
+            const step = 0.05 * speed; // facteur d'échelle
+
+            // Déplacement relatif (avant/arrière = -dy)
+            rigPos.addScaledVector(forward, -dy * step);
+            rigPos.addScaledVector(right, dx * step);
+          });
+        }
+      });
+
+      // Rotation par crans (snap turn) avec le joystick droit
+      AFRAME.registerComponent('snap-turn', {
+        schema: {
+          angle: { type: 'number', default: 30 },     // degrés par cran
+          cooldown: { type: 'number', default: 300 }  // ms entre deux rotations
+        },
+        init: function () {
+          const rig = document.querySelector('#rig');
+          const rightHand = document.querySelector('#rightHand');
+          const angle = this.data.angle;
+          const cooldown = this.data.cooldown;
+
+          let lastTurn = 0;
+
+          rightHand.addEventListener('thumbstickmoved', function (evt) {
+            const now = Date.now();
+            const x = evt.detail.x;
+
+            // seuil "cran" + cooldown
+            if (Math.abs(x) < 0.8 || now - lastTurn < cooldown) return;
+
+            const rad = THREE.MathUtils.degToRad(angle);
+            if (x > 0.8) {
+              // tourner à droite
+              rig.object3D.rotation.y -= rad;
+              lastTurn = now;
+            } else if (x < -0.8) {
+              // tourner à gauche
+              rig.object3D.rotation.y += rad;
+              lastTurn = now;
+            }
+          });
+        }
+      });
+    </script>
   </body>
 </html>
-<script>
-    AFRAME.registerComponent('JoystickMovement', {
-        init: function () {
-            this.direction = new THREE.Vector3();
-            this.velocity = new THREE.Vector3();
-            this.speed = 0.1; // Vitesse de déplacement
-            this.joystick = { x: 0, y: 0 }; // Position du joystick
-            this.isMoving = false;
-
-            // Écoute les événements du joystick (à adapter selon la bibliothèque utilisée)
-            window.addEventListener('joystickMove', (event) => {
-                this.joystick.x = event.detail.x;
-                this.joystick.y = event.detail.y;
-                this.isMoving = true;
-            });
-
-            window.addEventListener('joystickEnd', () => {
-                this.joystick.x = 0;
-                this.joystick.y = 0;
-                this.isMoving = false;
-            });
-        },
-        tick: function (time, deltaTime) {
-            if (this.isMoving) {
-                // Calcule la direction basée sur la position du joystick
-                this.direction.set(this.joystick.x, 0, this.joystick.y).normalize();
-
-                // Applique la vitesse
-                this.velocity.copy(this.direction).multiplyScalar(this.speed * (deltaTime / 16));
-
-                // Met à jour la position de l'entité
-                const rig = document.getElementById('rig');
-                rig.object3D.position.add(this.velocity);
-            }
-        }
-    });
-    document.getElementById('LeftHand').setAttribute('JoystickMovement', '');
-    AFRAME.registerComponent('JoystickLook', {
-        init: function () {
-            this.lookSpeed = 0.1; // Vitesse de rotation
-            this.joystick = { x: 0, y: 0 }; // Position du joystick
-            this.isLooking = false;
-
-            // Écoute les événements du joystick (à adapter selon la bibliothèque utilisée)
-            window.addEventListener('joystickLookMove', (event) => {
-                this.joystick.x = event.detail.x;
-                this.joystick.y = event.detail.y;
-                this.isLooking = true;
-            });
-
-            window.addEventListener('joystickLookEnd', () => {
-                this.joystick.x = 0;
-                this.joystick.y = 0;
-                this.isLooking = false;
-            });
-        },
-        tick: function (time, deltaTime) {
-            if (this.isLooking) {
-                const head = document.getElementById('head');
-                const rotation = head.getAttribute('rotation');
-
-                // Met à jour la rotation basée sur la position du joystick
-                rotation.y -= this.joystick.x * this.lookSpeed * (deltaTime / 16);
-                rotation.x -= this.joystick.y * this.lookSpeed * (deltaTime / 16);
-                rotation.x = Math.max(-90, Math.min(90, rotation.x)); // Limite la rotation verticale
-
-                head.setAttribute('rotation', rotation);
-            }
-        }
-    });
-    document.getElementById('RightHand').setAttribute('JoystickLook', '');
-
-</script>
