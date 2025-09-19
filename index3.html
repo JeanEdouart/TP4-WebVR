@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Exercice 2</title>
+    <title>Exercice 3</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
     <!-- A-Frame 1.7.0 -->
@@ -69,6 +69,97 @@
           });
         }
       });
+      AFRAME.registerComponent('gun', {
+        schema: {
+            bulletSpeed:   {type: 'number', default: 22},  // m/s environ
+            bulletRadius:  {type: 'number', default: 0.03},
+            bulletMass:    {type: 'number', default: 0.06},
+            cooldown:      {type: 'number', default: 120}  // ms entre deux tirs
+        },
+        init: function () {
+            this.muzzleEl = this.el.querySelector('#muzzle');
+            this.holdingHand = null;
+            this._onTriggerDown = this._onTriggerDown.bind(this);
+            this._onGrabStart   = this._onGrabStart.bind(this);
+            this._onGrabEnd     = this._onGrabEnd.bind(this);
+            this.cooling = false;
+
+            this.el.addEventListener('grab-start', this._onGrabStart);
+            this.el.addEventListener('grab-end',   this._onGrabEnd);
+        },
+        remove: function () {
+            this._detachHandListeners();
+            this.el.removeEventListener('grab-start', this._onGrabStart);
+            this.el.removeEventListener('grab-end',   this._onGrabEnd);
+        },
+        _onGrabStart: function (evt) {
+            // evt.detail.hand = entité contrôleur qui saisit (left/right hand)
+            this.holdingHand = evt.detail.hand;
+            // on écoute le TRIGGER (gâchette)
+            this.holdingHand.addEventListener('triggerdown', this._onTriggerDown);
+            // compat WebXR: certains émettent aussi 'abuttondown' / 'squeezestart' pour d'autres boutons
+        },
+        _onGrabEnd: function () {
+            this._detachHandListeners();
+            this.holdingHand = null;
+        },
+        _detachHandListeners: function () {
+            if (this.holdingHand) {
+            this.holdingHand.removeEventListener('triggerdown', this._onTriggerDown);
+            }
+        },
+        _onTriggerDown: function () {
+            if (this.cooling) return;
+            this.cooling = true;
+            this._fire();
+            setTimeout(() => { this.cooling = false; }, this.data.cooldown);
+        },
+        _fire: function () {
+            const sceneEl = this.el.sceneEl;
+            if (!sceneEl || !this.muzzleEl) return;
+
+            // Position monde du muzzle
+            const muzzleWorld = new THREE.Vector3();
+            this.muzzleEl.object3D.getWorldPosition(muzzleWorld);
+
+            // Direction monde (avant = -Z local)
+            const dir = new THREE.Vector3();
+            this.el.object3D.getWorldDirection(dir); // donne la direction -Z en monde
+            dir.normalize();
+
+            // Créer la balle (petite sphère physique)
+            const bullet = document.createElement('a-sphere');
+            bullet.setAttribute('radius', this.data.bulletRadius);
+            bullet.setAttribute('color', '#ddd');
+            bullet.setAttribute('position', `${muzzleWorld.x} ${muzzleWorld.y} ${muzzleWorld.z}`);
+            bullet.setAttribute('shadow', 'cast: true; receive: false');
+            bullet.setAttribute('dynamic-body',
+            `mass: ${this.data.bulletMass}; shape: sphere; linearDamping: 0.01; angularDamping: 0.01`);
+
+            // éviter que super-hands essaie de la saisir par accident
+            bullet.classList.add('projectile');
+
+            sceneEl.appendChild(bullet);
+
+            // Quand le corps physique est prêt, on applique la vitesse/impulsion
+            const speed = this.data.bulletSpeed;
+            bullet.addEventListener('body-loaded', () => {
+            // Décaler un peu pour éviter collision immédiate avec l'arme
+            bullet.body.position.x += dir.x * (this.data.bulletRadius + 0.01);
+            bullet.body.position.y += dir.y * (this.data.bulletRadius + 0.01);
+            bullet.body.position.z += dir.z * (this.data.bulletRadius + 0.01);
+
+            // Donner une vitesse initiale
+            const v = new CANNON.Vec3(dir.x * speed, dir.y * speed, dir.z * speed);
+            bullet.body.velocity.set(v.x, v.y, v.z);
+            });
+
+            // Auto-détruire la balle après 5 s pour ne pas surcharger la scène
+            setTimeout(() => {
+            if (bullet.parentNode) bullet.parentNode.removeChild(bullet);
+            }, 5000);
+        }
+        });
     </script>
   </head>
 
@@ -84,11 +175,12 @@
       <a-assets>
         <img id="skyTexture" src="./skynet.jpg" />
         <img id="groundTexture" src="./grass.jpg" />
+        <a-asset-item id="pistol" src="./low-poly_simeon_north_model_1826.glb"></a-asset-item>
       </a-assets>
 
       <!-- Lumières -->
-      <a-entity light="type: ambient; intensity: 0.4"></a-entity>
-      <a-entity light="type: directional; intensity: 1; castShadow: true" position="2 4 -2"></a-entity>
+      <a-entity id="lightAmbient" light="type: ambient; intensity: 0.4"></a-entity>
+      <a-entity id="lightDirectional" light="type: directional; intensity: 1; castShadow: true" position="2 4 -2"></a-entity>
 
       <!-- RIG + caméra + contrôleurs -->
       <a-entity id="rig" position="0 1 0" joystick-movement="speed: 2" snap-turn="angle: 30; cooldown: 300">
@@ -135,6 +227,18 @@
                static-body>
       </a-plane>
 
+        <!-- ARME -->
+        <a-entity id="gun"
+                class="grabbable"
+                position="2 1.0 -1.5" rotation="0 0 0"
+                grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
+                dynamic-body="mass: 1.2; shape: box"
+                gun="bulletSpeed: 22; bulletRadius: 0.03; bulletMass: 0.06; cooldown: 120">
+            <!-- corps de l'arme -->
+            <a-entity gltf-model="#pistol" scale="0.4 0.4 0.4" rotation="0 90 0" position="0 0 0"></a-entity>
+            <!-- muzzle : point de sortie des projectiles (devant, le long de -Z local) -->
+            <a-entity id="muzzle" position="0 0.143 -0.890"></a-entity>
+        </a-entity>
       <a-sky src="#skyTexture"></a-sky>
     </a-scene>
   </body>
