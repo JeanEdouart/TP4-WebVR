@@ -367,7 +367,7 @@
                static-body>
       </a-plane>
       <a-entity id="table" geometry="primitive: box; width: 2; height: 0.1; depth: 1"
-                position="0 0.5 -1" material="color: brown"
+                position="0 1 -1" material="color: brown"
                 static-body shadow="cast: true; receive: true">
       </a-entity>
 
@@ -381,11 +381,9 @@
         shadow
         grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
         dynamic-body="mass: 1; shape: box"
-        toggle-hold="position: 0 -0.02 -0.04; rotation: 70 180 0"
+        toggle-hold="position: 0 -0.02 -0.04; rotation: 70 90 0"
         gun-shooter="muzzleOffset: 0 0.02 -0.6; bulletSpeed: 22; bulletTTL: 4000; sound: #gunShot">
-        <!-- (Optionnel) si ton GLTF n’a pas le bon offset, ajoute un marqueur de canon :
-        <a-entity class="muzzle" position="0 0 -0.6"></a-entity>
-        -->
+        <a-entity class="muzzle" position="2.3 0.374 -0.01"></a-entity>
       </a-entity>
 
       <a-sky src="#skyTexture"></a-sky>
