@@ -2,22 +2,22 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Exercice 3</title>
+    <title>Exercice 3 — stable</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
     <!-- A-Frame 1.7.0 -->
     <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
 
-    <!-- Supprimer l'ancien grabbable (conflit) -->
+    <!-- Supprimer le grabbable d'A-Frame (conflit avec super-hands) -->
     <script> if (AFRAME.components && AFRAME.components['grabbable']) delete AFRAME.components['grabbable']; </script>
 
-    <!-- Colliders (sphere-collider) -->
+    <!-- Colliders -->
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.2/dist/aframe-extras.min.js"></script>
 
-    <!-- Physics (Cannon driver) -->
+    <!-- Physics (Cannon) -->
     <script src="https://cdn.jsdelivr.net/npm/@c-frame/aframe-physics-system@4.2.3/dist/aframe-physics-system.min.js"></script>
 
-    <!-- super-hands 3.x -->
+    <!-- super-hands -->
     <script src="https://unpkg.com/super-hands@3.0.5/dist/super-hands.min.js"></script>
 
     <style>body{margin:0}</style>
@@ -30,23 +30,17 @@
           const rig = document.querySelector('#rig');
           const head = document.querySelector('#head');
           const leftHand = document.querySelector('#leftHand');
-          const DEADZONE = 0.1;
-          const speed = this.data.speed;
+          const DEADZONE = 0.1, speed = this.data.speed;
           if (!leftHand) return;
-
           leftHand.addEventListener('thumbstickmoved', (e) => {
             const dx = e.detail.x, dy = e.detail.y;
             if (Math.abs(dx) < DEADZONE && Math.abs(dy) < DEADZONE) return;
-
             const forward = new THREE.Vector3();
             head.object3D.getWorldDirection(forward);
             forward.y = 0; forward.normalize();
-
             const right = new THREE.Vector3();
             right.crossVectors(forward, new THREE.Vector3(0,1,0)).negate();
-
-            const step = 0.05 * speed;
-            const p = rig.object3D.position;
+            const step = 0.05 * speed, p = rig.object3D.position;
             p.addScaledVector(forward, dy * step);
             p.addScaledVector(right,  dx * step);
           });
@@ -72,112 +66,24 @@
         }
       });
 
-      /* ====== Cache la main quand elle tient ====== */
-      AFRAME.registerComponent('hide-hand-on-grab', {
-        init: function () {
-          const hand = this.el, scene = hand.sceneEl;
-          scene.addEventListener('grab-start', e => { if (e.detail?.hand === hand) hand.setAttribute('visible','false'); });
-          scene.addEventListener('grab-end',   e => { if (e.detail?.hand === hand) hand.setAttribute('visible','true');  });
-          hand.addEventListener('grab-start', () => hand.setAttribute('visible','false'));
-          hand.addEventListener('grab-end',   () => hand.setAttribute('visible','true'));
-        }
-      });
-
-      /* ====== Toggle-hold propre (gripdown pour prendre / re-gripdown pour lâcher) ====== */
-      AFRAME.registerComponent('toggle-hold', {
-        schema: {
-          position: { type: 'vec3', default: { x: 0,  y: -0.02, z: -0.04 } }, // offset du point d'appui dans la main
-          rotation: { type: 'vec3', default: { x: 70, y: 180,  z: 0 } }       // orientation locale de l'arme en main
-        },
-        init: function () {
-          this.held = false;
-          this.hand = null;
-          this.gp = null;
-          this.savedDyn = null;
-
-          this._onGrabStart = this._onGrabStart.bind(this);
-          this._onGripDown  = this._onGripDown.bind(this);
-
-          this.el.addEventListener('grab-start', this._onGrabStart);
-        },
-        remove: function () {
-          if (this.hand) this.hand.removeEventListener('gripdown', this._onGripDown);
-          if (this.gp && this.gp.parentNode) this.gp.parentNode.removeChild(this.gp);
-        },
-        _onGrabStart: function (e) {
-          // si déjà pris -> on ignore (toggle fait via gripdown)
-          if (this.held) return;
-          const hand = e.detail?.hand;
-          if (!hand) return;
-
-          // couper provisoirement la physique
-          if (this.el.hasAttribute('dynamic-body')) {
-            this.savedDyn = this.el.getAttribute('dynamic-body');
-            this.el.removeAttribute('dynamic-body');
-          }
-
-          // créer point d'attache dans la main
-          const gp = document.createElement('a-entity');
-          hand.appendChild(gp);
-          const pos = this.data.position;
-          gp.object3D.position.set(pos.x, pos.y, pos.z);
-
-          // attacher l'objet à la main
-          gp.object3D.attach(this.el.object3D);
-
-          // orienter l'objet en main
-          const rot = this.data.rotation;
-          this.el.object3D.position.set(0,0,0);
-          this.el.object3D.rotation.set(
-            THREE.MathUtils.degToRad(rot.x),
-            THREE.MathUtils.degToRad(rot.y),
-            THREE.MathUtils.degToRad(rot.z)
-          );
-
-          this.held = true;
-          this.hand = hand;
-          this.gp = gp;
-
-          // écoute unique : re-gripdown pour lâcher
-          hand.addEventListener('gripdown', this._onGripDown);
-        },
-        _onGripDown: function (e) {
-          if (e.currentTarget !== this.hand) return;
-          // détacher dans la scène
-          try { this.el.sceneEl.object3D.attach(this.el.object3D); } catch(e){}
-          // restaurer la physique
-          if (this.savedDyn) {
-            const d = this.savedDyn; this.savedDyn = null;
-            setTimeout(() => this.el.setAttribute('dynamic-body', d), 0);
-          }
-          if (this.hand) this.hand.removeEventListener('gripdown', this._onGripDown);
-          if (this.gp && this.gp.parentNode) this.gp.parentNode.removeChild(this.gp);
-          this.gp = null;
-          this.hand = null;
-          this.held = false;
-        }
-      });
-
-      /* ====== Tir 100% stable : vitesse directe, direction depuis .muzzle ====== */
+      /* ====== Tir : vitesse directe, direction depuis .muzzle ====== */
       AFRAME.registerComponent('gun-shooter', {
         schema: {
           muzzleOffset: {type: 'vec3', default: {x: 0, y: 0.02, z: -0.6}}, // fallback si pas de .muzzle
           bulletRadius: {type: 'number', default: 0.03},
           bulletMass:   {type: 'number', default: 0.04},
           bulletTTL:    {type: 'number', default: 4000},
-          bulletSpeed:  {type: 'number', default: 35},
+          bulletSpeed:  {type: 'number', default: 30},
           sound:        {type: 'selector'}
         },
         init: function () {
           this.isHeld = false;
           this.holdingHand = null;
 
-          // état tenu via super-hands
+          // when grabbed / released by super-hands
           this.el.addEventListener('grab-start', e => { this.isHeld = true;  this.holdingHand = e.detail?.hand || null; });
-          // on ne s'appuie PAS sur grab-end (toggle-hold gère la dépose)
-          this.el.addEventListener('grab-end',   () => { this.isHeld = false; this.holdingHand = null; });
+          this.el.addEventListener('grab-end',   e => { if (e.detail?.hand === this.holdingHand) { this.isHeld = false; this.holdingHand = null; } });
 
-          // écoute gâchette : tir au "click" (edge), pas besoin de maintenir
           const L = document.querySelector('#leftHand');
           const R = document.querySelector('#rightHand');
           const onTrigger = (evt) => {
@@ -189,10 +95,9 @@
           R && R.addEventListener('triggerdown', onTrigger);
         },
         fire: function () {
-          const scene = this.el.sceneEl;
-          const data  = this.data;
+          const scene = this.el.sceneEl, data = this.data;
 
-          // 1) bouche du canon (priorité à .muzzle)
+          // 1) position + rotation globale de la bouche du canon
           const muzzleNode = this.el.querySelector('.muzzle');
           const posW = new THREE.Vector3();
           const quatW = new THREE.Quaternion();
@@ -207,43 +112,41 @@
             this.el.object3D.getWorldQuaternion(quatW);
           }
 
-          // 2) direction = -Z du muzzle (A-Frame “avant”)
+          // 2) direction = -Z du muzzle
           const forward = new THREE.Vector3(0,0,-1).applyQuaternion(quatW).normalize();
 
-          // 3) créer projectile
+          // 3) créer balle
           const bullet = document.createElement('a-sphere');
           bullet.setAttribute('radius', data.bulletRadius);
           bullet.setAttribute('color', '#BBBBBB');
-          // dynamique + stabilité
-          bullet.setAttribute('dynamic-body',
-            `shape: sphere; mass: ${data.bulletMass}; linearDamping: 0; angularDamping: 0.01;`);
           bullet.setAttribute('shadow', 'cast: true; receive: false');
-
-          // placer un peu devant le canon pour éviter la collision initiale
+          bullet.setAttribute('dynamic-body', `shape: sphere; mass: ${data.bulletMass}; linearDamping: 0; angularDamping: 0.01;`);
+          // éviter collision immédiate avec l’arme
           const spawn = posW.clone().add(forward.clone().multiplyScalar(0.12));
           bullet.setAttribute('position', `${spawn.x} ${spawn.y} ${spawn.z}`);
 
-          // 4) quand le body est prêt -> définir la vitesse directement
+          // 4) quand body prêt -> définir la vitesse
           bullet.addEventListener('body-loaded', () => {
             if (!bullet.body) return;
             const v = forward.clone().multiplyScalar(data.bulletSpeed);
             bullet.body.velocity.set(v.x, v.y, v.z);
-            bullet.body.sleepTimeLimit = 0; // jamais “sleep” (Cannon)
+            bullet.body.allowSleep = false;
           });
 
-          // 5) collisions : supprimer à l’impact + TTL de secours
+          // collisions : retirer à l'impact + garde-fou TTL
           bullet.addEventListener('collide', () => bullet.remove());
           scene.appendChild(bullet);
           setTimeout(() => bullet.remove(), data.bulletTTL);
 
-          // 6) son optionnel
+          // son (optionnel)
           const audioEl = data.sound || document.querySelector('#gunShot');
           if (audioEl) {
-            const snd = this.el.components?.sound;
-            if (!snd) {
+            if (!this.el.components.sound) {
               this.el.setAttribute('sound', `src: #gunShot; positional: true; volume: 1`);
               setTimeout(() => this.el.components?.sound?.playSound(), 10);
-            } else snd.playSound();
+            } else {
+              this.el.components.sound.playSound();
+            }
           }
         }
       });
@@ -274,41 +177,42 @@
       <a-entity id="rig" position="0 1 0" joystick-movement snap-turn>
         <a-entity id="head" camera wasd-controls-enabled="false" look-controls></a-entity>
 
-        <!-- super-hands en mode TOGGLE : on enlève l’auto “grabEndButtons” -->
+        <!-- super-hands : HOLD-TO-GRAB (maintenir grip/squeeze pour tenir, relâcher pour lâcher) -->
         <a-entity id="leftHand"
           oculus-touch-controls="hand: left"
-          super-hands="grabStartButtons: gripdown; grabEndButtons: ;"
+          super-hands="grabStartButtons: gripdown, squeezestart; grabEndButtons: gripup, squeezeend"
           sphere-collider="objects: .grabbable"
-          static-body="shape: sphere; sphereRadius: 0.06"
-          hide-hand-on-grab>
+          static-body="shape: sphere; sphereRadius: 0.03">
         </a-entity>
 
         <a-entity id="rightHand"
           oculus-touch-controls="hand: right"
-          super-hands="grabStartButtons: gripdown; grabEndButtons: ;"
+          super-hands="grabStartButtons: gripdown, squeezestart; grabEndButtons: gripup, squeezeend"
           sphere-collider="objects: .grabbable"
-          static-body="shape: sphere; sphereRadius: 0.06"
-          hide-hand-on-grab>
+          static-body="shape: sphere; sphereRadius: 0.03">
         </a-entity>
       </a-entity>
 
       <!-- OBJETS SAISISSABLES (physiques) -->
       <a-box class="grabbable" position="-1 0.6 -1.6" rotation="0 45 0" color="#4CC3D9"
              shadow="cast: true; receive: true"
-             grabbable dynamic-body="mass: 1; shape: box">
+             grabbable="usePhysics: only"
+             dynamic-body="mass: 1; shape: box">
       </a-box>
 
       <a-sphere class="grabbable" position="0 1.2 -2" radius="0.5" color="#EF2D5E"
                 shadow="cast: true; receive: true"
-                grabbable dynamic-body="mass: 0.5; shape: sphere">
+                grabbable="usePhysics: only"
+                dynamic-body="mass: 0.5; shape: sphere">
       </a-sphere>
 
       <a-cylinder class="grabbable" position="1 0.9 -2.4" radius="0.4" height="1" color="#FFC65D"
                   shadow="cast: true; receive: true"
-                  grabbable dynamic-body="mass: 0.75; shape: cylinder">
+                  grabbable="usePhysics: only"
+                  dynamic-body="mass: 0.75; shape: cylinder">
       </a-cylinder>
 
-      <!-- Sol + table -->
+      <!-- Sol + table (statique) -->
       <a-plane position="0 0 -1" rotation="-90 0 0" width="100" height="100" src="#groundTexture"
                shadow="cast: false; receive: true" static-body></a-plane>
 
@@ -317,7 +221,7 @@
                 static-body shadow="cast: true; receive: true">
       </a-entity>
 
-      <!-- ARME : toggle-hold + tir -->
+      <!-- ARME : hold-to-grab + tir -->
       <a-entity id="gun"
         class="grabbable"
         gltf-model="#gunModel"
@@ -325,12 +229,11 @@
         scale="0.1 0.1 0.1"
         rotation="0 90 0"
         shadow
-        grabbable
+        grabbable="usePhysics: only"
         dynamic-body="mass: 1; shape: box"
-        toggle-hold="position: 0 -0.1 -0.1; rotation: 0 90 -60"
-        gun-shooter="muzzleOffset: 0 0.02 -0.6; bulletSpeed: 35; bulletTTL: 4000; sound: #gunShot">
+        gun-shooter="muzzleOffset: 0 0.02 -0.6; bulletSpeed: 30; bulletTTL: 4000; sound: #gunShot">
 
-        <!-- Place ce repère à la bouche du canon, orienté vers l’AVANT (-Z) -->
+        <!-- Place ce repère au bout du canon; son -Z doit pointer vers l'avant -->
         <a-entity class="muzzle" position="2.30 0.374 -0.01"></a-entity>
       </a-entity>
 
