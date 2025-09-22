@@ -215,7 +215,7 @@
           bulletRadius: {type: 'number', default: 0.03},
           bulletMass:   {type: 'number', default: 0.05},
           bulletTTL:    {type: 'number', default: 4000},
-          bulletSpeed:  {type: 'number', default: 22},
+          bulletSpeed:  {type: 'number', default: 100},
           sound:        {type: 'selector'} // optionnel: <audio id="gunShot">
         },
         init: function () {
@@ -263,7 +263,7 @@
           bullet.setAttribute('position', `${muzzleWorld.x} ${muzzleWorld.y} ${muzzleWorld.z}`);
           bullet.setAttribute('color', '#BBBBBB');
           bullet.setAttribute('shadow', 'cast: true; receive: false');
-          bullet.setAttribute('dynamic-body', `shape: sphere; mass: 1`);
+          bullet.setAttribute('dynamic-body', `shape: sphere; mass: ${data.bulletMass}`);
           bullet.classList.add('projectile');
 
           // 4) Ajout + impulsion
