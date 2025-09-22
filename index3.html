@@ -366,12 +366,16 @@
                shadow="cast: false; receive: true"
                static-body>
       </a-plane>
+      <a-entity id="table" geometry="primitive: box; width: 2; height: 0.1; depth: 1"
+                position="0 0.5 -1" material="color: brown"
+                static-body shadow="cast: true; receive: true">
+      </a-entity>
 
       <!-- Arme : stable + tir -->
       <a-entity id="gun"
         class="grabbable"
         gltf-model="#gunModel"
-        position="0 1.5 -6"
+        position="0 1.5 -1"
         scale="0.1 0.1 0.1"
         rotation="0 90 0"
         shadow
