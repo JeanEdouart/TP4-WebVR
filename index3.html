@@ -263,7 +263,7 @@
           bullet.setAttribute('position', `${muzzleWorld.x} ${muzzleWorld.y} ${muzzleWorld.z}`);
           bullet.setAttribute('color', '#BBBBBB');
           bullet.setAttribute('shadow', 'cast: true; receive: false');
-          bullet.setAttribute('dynamic-body', `shape: sphere; mass: ${data.bulletMass}`);
+          bullet.setAttribute('dynamic-body', `shape: sphere; mass: 1`);
           bullet.classList.add('projectile');
 
           // 4) Ajout + impulsion
