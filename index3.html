@@ -9,7 +9,7 @@
     <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
 
     <!-- A-Frame 1.5+ : éviter le conflit de nom "grabbable" -->
-    <script> delete AFRAME.components["grabbable"]; </script> <!-- cf. super-hands -->
+    <script> delete AFRAME.components["grabbable"]; </script>
 
     <!-- aframe-extras (sphere-collider) -->
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.2/dist/aframe-extras.min.js"></script>
@@ -20,7 +20,7 @@
     <!-- super-hands 3.x -->
     <script src="https://unpkg.com/super-hands@3.0.5/dist/super-hands.min.js"></script>
 
-    <!-- Tes composants de déplacement -->
+    <!-- Tes composants de déplacement + gun -->
     <script>
       // Déplacement joystick gauche
       AFRAME.registerComponent('joystick-movement', {
@@ -69,6 +69,82 @@
           });
         }
       });
+
+      // Gun Shooting component
+      AFRAME.registerComponent('gun-shoot', {
+        schema: {
+          hand: { type: 'selector' },
+          bulletSpeed: { type: 'number', default: 40 }, // ajustable
+          bulletLifetime: { type: 'number', default: 5000 } // ms
+        },
+        init: function () {
+          const el = this.el;
+          const hand = this.data.hand;
+          const speed = this.data.bulletSpeed;
+          const lifetime = this.data.bulletLifetime;
+
+          // Position d'où sort la balle (doit être un enfant du modèle du gun)
+          const shootPos = el.querySelector('#shootPos');
+
+          // fallback si shootPos introuvable : tirer depuis la position locale du gun
+          const getStartPos = () => {
+            if (shootPos) {
+              return shootPos.object3D.getWorldPosition(new THREE.Vector3());
+            }
+            return el.object3D.getWorldPosition(new THREE.Vector3());
+          };
+
+          // Trigger (bouton déclencheur)
+          hand.addEventListener('triggerdown', () => {
+            // Tir uniquement si l'arme est saisie
+            if (!el.is('grabbed')) return;
+
+            // Création de la balle
+            const bullet = document.createElement('a-sphere');
+            const startPos = getStartPos();
+
+            // Position & apparence
+            bullet.setAttribute('position', `${startPos.x} ${startPos.y} ${startPos.z}`);
+            bullet.setAttribute('radius', 0.05);
+            bullet.setAttribute('color', '#ff3333');
+            bullet.setAttribute('shadow', 'cast: true; receive: false');
+
+            // Physique : corps dynamique (masse petite)
+            bullet.setAttribute('dynamic-body', 'mass: 0.1; shape: sphere');
+
+            // Ajout à la scène
+            el.sceneEl.appendChild(bullet);
+
+            // Calculer direction avant du shootPos (ou du gun) et appliquer vitesse
+            const direction = new THREE.Vector3();
+            if (shootPos) {
+              shootPos.object3D.getWorldDirection(direction);
+            } else {
+              // fallback : direction avant du gun wrapper
+              el.object3D.getWorldDirection(direction);
+            }
+            direction.normalize();
+
+            // Appliquer la vitesse lorsque le body est chargé
+            bullet.addEventListener('body-loaded', () => {
+              // Méthode simple : setAttribute velocity (supportée par aframe-physics-system)
+              const vx = direction.x * speed;
+              const vy = direction.y * speed;
+              const vz = direction.z * speed;
+              bullet.setAttribute('velocity', `${vx} ${vy} ${vz}`);
+
+              // Optionnel : on peut aussi appliquer un impulse via cannon body si nécessaire
+              // const body = bullet.body;
+              // body.velocity.set(vx, vy, vz);
+            });
+
+            // Nettoyage après un certain temps
+            setTimeout(() => {
+              if (bullet.parentNode) bullet.parentNode.removeChild(bullet);
+            }, lifetime);
+          });
+        }
+      });
     </script>
   </head>
 
@@ -80,10 +156,12 @@
       device-orientation-permission-ui="enabled: true"
       physics="gravity: -9.8; debug: false"
     >
-      <!-- Assets -->
+      <!-- Assets : remplace les chemins si besoin -->
       <a-assets>
         <img id="skyTexture" src="./skynet.jpg" />
         <img id="groundTexture" src="./grass.jpg" />
+        <!-- Ton modèle GLTF : scene.gltf (doit être accompagné de scene.bin dans le même dossier) -->
+        <a-asset-item id="gunModel" src="./assets/scene.gltf"></a-asset-item>
       </a-assets>
 
       <!-- Lumières -->
@@ -128,6 +206,31 @@
                   grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
                   dynamic-body="mass: 0.75; shape: cylinder">
       </a-cylinder>
+
+      <!-- Gun wrapper (saisissable) : adapte position/scale selon ton modèle -->
+      <a-entity id="GunWrapper"
+        class="grabbable"
+        position="2.531 1.2 -1.0"
+        rotation="0 0 0"
+        scale="1 1 1"
+        shadow="cast: true; receive: true"
+        geometry="primitive: box; width: 0.4; height: 0.2; depth: 0.2"
+        material="opacity: 0; transparent: true"
+        grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
+        dynamic-body="mass: 1; shape: box"
+        gun-shoot="hand: #rightHand; bulletSpeed: 45; bulletLifetime: 5000">
+
+        <!-- Modèle GLTF du pistolet -->
+        <a-entity id="gunModelInScene"
+          gltf-model="#gunModel"
+          position="0 0 0"
+          rotation="0 0 0"
+          scale="0.9 0.9 0.9"
+          shadow="cast: true; receive: true">
+          <!-- shootPos : point d'émission des balles (à ajuster selon l'orientation du model) -->
+          <a-entity id="shootPos" position="0.2 0.05 -0.35"></a-entity>
+        </a-entity>
+      </a-entity>
 
       <!-- Sol -->
       <a-plane position="0 0 -1" rotation="-90 0 0" width="100" height="100" src="#groundTexture"
