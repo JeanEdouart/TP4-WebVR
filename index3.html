@@ -84,8 +84,8 @@
       */
       AFRAME.registerComponent('toggle-hold', {
         schema: {
-          position: { type: 'vec3', default: { x: 0, y: -0.02, z: -0.04 } }, // offset dans la main
-          rotation: { type: 'vec3', default: { x: 70, y: 180, z: 0 } }       // orientation ergonomique
+          position: { type: 'vec3', default: { x: 0, y: -0.2, z: -0.4 } }, // offset dans la main
+          rotation: { type: 'vec3', default: { x: 0, y: 0, z: 0 } }       // orientation ergonomique
         },
         init: function () {
           this._held = false;
