@@ -251,7 +251,7 @@
           areaMax: { type: 'vec3', default: { x:  3, y: 2.2, z: -2 } },
           maxTargets: { type: 'int', default: 6 },
           respawnDelay: { type: 'number', default: 1000 },
-          shapes: { type: 'string', default: 'box,cylinder,sphere' },
+          shapes: { type: 'string', default: 'box,sphere' },
           minPlayerDist: { type: 'number', default: 1.6 }
         },
         init: function () {
@@ -276,7 +276,6 @@
 
           let t;
           switch (shape) {
-            case 'cylinder': t = document.createElement('a-cylinder'); t.setAttribute('height','0.25'); t.setAttribute('radius','0.25'); break;
             case 'sphere':   t = document.createElement('a-sphere');   t.setAttribute('radius','0.28'); break;
             default:         t = document.createElement('a-box');      t.setAttribute('depth','0.25');  t.setAttribute('height','0.25'); t.setAttribute('width','0.25');
           }
@@ -518,7 +517,7 @@
           areaMax:  3 2.2 -2;
           maxTargets: 6;
           respawnDelay: 1000;
-          shapes: box,cylinder,sphere;
+          shapes: box,sphere;
           minPlayerDist: 1.6">
       </a-entity>
 
