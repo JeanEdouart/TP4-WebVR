@@ -186,7 +186,7 @@
 
           // Position monde du muzzle + petit offset vers l'avant pour éviter collision avec le gun
           const pos = new THREE.Vector3();
-          const dir = new THREE.Vector3(-1, 0, 0);
+          const dir = new THREE.Vector3(0, 0, 0);
           muzzle.object3D.getWorldPosition(pos);
           muzzle.object3D.getWorldDirection(dir);
           dir.normalize();
@@ -286,10 +286,10 @@
           material="opacity: 0; transparent: true"
           dynamic-body="mass: 1; shape: box"
           grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
-          toggle-hold="position: 0 -0.2 -0.4; rotation: 30 90 -60"
+          toggle-hold="position: 0 -0.02 -0.2; rotation: 30 90 -60"
           gun-shoot="speed: 55; lifetime: 4000">
           <!-- Muzzle : ajuste la position/rotation pour qu'il soit précisément au bout du canon -->
-          <a-entity id="muzzle" position="2.185 0.417 -0.015" rotation="0 0 0" material="box" opacity="1"></a-entity>
+          <a-entity id="muzzle" position="2.185 0.417 -0.015" rotation="0 0 90" material="box" opacity="1"></a-entity>
         </a-entity>
       </a-entity>
 
