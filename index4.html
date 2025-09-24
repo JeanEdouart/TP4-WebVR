@@ -175,7 +175,7 @@
         }
       }
 
-      /* === Cible : son + particules + auto-destruction === */
+      /* === Cible : son + particules + auto-destruction (déférée) === */
       AFRAME.registerComponent('target', {
         schema: {
           hitsound: { type: 'selector' },
@@ -212,21 +212,32 @@
           }
 
           spawnParticles(scene, pos, this.data.particles, this.data.life);
+
+          // Notifier le spawner tout de suite (il attendra respawnDelay)
           scene.emit('target-destroyed', { el: this.el });
-          if (this.el.parentNode) this.el.parentNode.removeChild(this.el);
+
+          // --- RENDRE INERTE + SUPPRIMER DANS LA FRAME SUIVANTE ---
+          try {
+            const body = this.el.body || (this.el.components['static-body'] && this.el.components['static-body'].body);
+            if (body) { body.collisionResponse = false; body.collisionFilterMask = 0; } // FIX: couper les collisions
+          } catch (e) { /* noop */ }
+          this.el.setAttribute('visible', 'false'); // FIX: cacher tout de suite
+
+          requestAnimationFrame(() => { // FIX: différer la suppression hors du step() physique
+            if (this.el.hasAttribute('static-body')) this.el.removeAttribute('static-body'); // FIX: détacher du monde Cannon proprement
+            if (this.el.parentNode) this.el.parentNode.removeChild(this.el);
+          });
         }
       });
 
       /* === Flottement style AimLab === */
       AFRAME.registerComponent('hover-bob', {
         schema: {
-          amp:   { type: 'number', default: 0.18 }, // amplitude en m
-          speed: { type: 'number', default: 0.5 },  // cycles/s
-          phase: { type: 'number', default: 0 }     // déphasage aléatoire
+          amp:   { type: 'number', default: 0.18 },
+          speed: { type: 'number', default: 0.5 },
+          phase: { type: 'number', default: 0 }
         },
-        init: function(){
-          this.baseY = this.el.object3D.position.y;
-        },
+        init: function(){ this.baseY = this.el.object3D.position.y; },
         tick: function (t) {
           const time = t/1000;
           this.el.object3D.position.y = this.baseY + this.data.amp * Math.sin((time + this.data.phase) * this.data.speed * 2*Math.PI);
@@ -241,7 +252,7 @@
           maxTargets: { type: 'int', default: 6 },
           respawnDelay: { type: 'number', default: 1000 },
           shapes: { type: 'string', default: 'box,cylinder,sphere' },
-          minPlayerDist: { type: 'number', default: 1.6 } // éviter spawn trop près
+          minPlayerDist: { type: 'number', default: 1.6 }
         },
         init: function () {
           this._targets = new Set();
@@ -264,20 +275,18 @@
           const shape = shapes[Math.floor(Math.random() * shapes.length)];
 
           let t;
-          switch (shape) { // formes simples, visibles, “cibles”
+          switch (shape) {
             case 'cylinder': t = document.createElement('a-cylinder'); t.setAttribute('height','0.25'); t.setAttribute('radius','0.25'); break;
             case 'sphere':   t = document.createElement('a-sphere');   t.setAttribute('radius','0.28'); break;
             default:         t = document.createElement('a-box');      t.setAttribute('depth','0.25');  t.setAttribute('height','0.25'); t.setAttribute('width','0.25');
           }
 
-          // placement avec contrainte de distance au joueur
           let pos, ok=false, tries=0;
           while (!ok && tries < 15) {
-            pos = this._randomPos();
-            tries++;
+            pos = this._randomPos(); tries++;
             if (!this.rig) { ok = true; break; }
             const rp = this.rig.object3D.position;
-            const dx=pos.x - rp.x, dy=pos.y - (rp.y+1.3), dz=pos.z - rp.z; // regard approximatif
+            const dx=pos.x - rp.x, dy=pos.y - (rp.y+1.3), dz=pos.z - rp.z;
             const dist = Math.sqrt(dx*dx+dy*dy+dz*dz);
             ok = dist >= this.data.minPlayerDist;
           }
@@ -314,11 +323,9 @@
           this._hand = null;
 
           this.muzzle = this.el.querySelector('#muzzle');
-          // On supporte 2 configurations: #shotAudio dédié OU sound directement sur #muzzle.
           this.shotAudioEl = this.el.querySelector('#shotAudio');
 
           this._playShot = () => {
-            // Priorité: #shotAudio si présent
             const sndNode =
               (this.shotAudioEl && this.shotAudioEl.components && this.shotAudioEl.components.sound)
               || (this.muzzle && this.muzzle.components && this.muzzle.components.sound
@@ -356,10 +363,8 @@
           const hold = this.el.components['toggle-hold'];
           if (!hold || !hold._held) return;
 
-          // Son de tir (stop puis play pour relancer instantanément)
           this._playShot();
 
-          // Création + lancement de la balle
           const muzzle = this.muzzle || this.el;
           const bullet = document.createElement('a-sphere');
           bullet.setAttribute('radius', 0.025);
@@ -378,14 +383,13 @@
           this.el.sceneEl.appendChild(bullet);
 
           const onCollide = (e) => {
-            // 1er contact : si cible, on la notifie, mais on NE SUPPRIME PAS la balle
             const other = e.detail && e.detail.body && e.detail.body.el;
             if (other && other.components && other.components['target']) {
               const p = new THREE.Vector3();
               bullet.object3D.getWorldPosition(p);
               other.emit('bullet-hit', { worldPos: p });
             }
-            // Désactiver nouvelles collisions pour éviter re-triggers
+            // Rendre la balle inerte (pas de re-triggers), la laisser vivre jusqu'au timeout
             try {
               const body = bullet.body || (bullet.components['dynamic-body'] && bullet.components['dynamic-body'].body);
               if (body) { body.collisionResponse = false; body.collisionFilterMask = 0; }
@@ -399,7 +403,6 @@
             bullet.setAttribute('velocity', `${dir.x * speed} ${dir.y * speed} ${dir.z * speed}`);
           });
 
-          // Auto-destruction après lifetime (même si collision)
           setTimeout(() => { if (bullet.parentNode) bullet.parentNode.removeChild(bullet); }, this.data.lifetime);
         }
       });
@@ -483,13 +486,10 @@
 
         <a-entity id="grip"   position="-1.485 -0.437 -0.02"></a-entity>
         <a-entity id="muzzle" position="0.50 0.417 -0.015" rotation="0 90 0">
-          <!-- Option A (recommandé) : nœud audio dédié -->
           <a-entity id="shotAudio"
             sound="src: #shotSfx; autoplay: false; positional: true;
                    volume: 0.8; refDistance: 1.2; rolloffFactor: 1.6; distanceModel: inverse">
           </a-entity>
-          <!-- Option B : si tu préfères, tu peux mettre directement sound sur #muzzle ;
-               le code le détectera aussi. -->
         </a-entity>
       </a-entity>
 
