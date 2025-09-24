@@ -2,7 +2,7 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Exercice 3 – Wrapper physique + Grab fluide + Tir aligné (grip fixe)</title>
+    <title>Exercice 3 – Wrapper physique + Grab fluide + Tir aligné</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
     <!-- A-Frame -->
@@ -27,7 +27,7 @@
     <style> body{margin:0} </style>
 
     <script>
-      /* === Déplacements (inchangé) === */
+      /* === Déplacements (ton code) === */
       AFRAME.registerComponent('joystick-movement', {
         schema: { speed: { type: 'number', default: 2 } },
         init: function () {
@@ -77,17 +77,15 @@
         }
       });
 
-      /* === Toggle-hold avec ALIGNEMENT SUR #grip ===
-         - garde ton angle via 'rotation' (parfait)
-         - aligne le point #grip exactement sous l'origine de la main
-         - physique désactivée pendant hold (anti-jitter), restaurée à la relâche
+      /* === Toggle-hold : grab fluide (désactive-physique pendant le hold) ===
+         - Wrapper physique (invisible) conserve la gravité quand posé
+         - Au grab : on remove dynamic-body TEMPORAIREMENT, on attache à la main
+         - À la relâche : on réattache à la scène et on RESTAURE dynamic-body
       */
       AFRAME.registerComponent('toggle-hold', {
         schema: {
-          position: { type: 'vec3', default: { x: 0, y: 0, z: 0 } }, // offset additionnel optionnel
-          rotation: { type: 'vec3', default: { x: 0, y: 0, z: 0  } }, // ton angle "parfait"
-          grip:     { type: 'selector', default: null }, // <a-entity id="grip"> sous le modèle
-          hideHand: { type: 'boolean', default: true }
+          position: { type: 'vec3', default: { x: 0, y: 0.5, z: 0 } }, // offset dans la main
+          rotation: { type: 'vec3', default: { x: 0, y: 0, z: 0 } }       // orientation ergonomique
         },
         init: function () {
           this._held = false;
@@ -95,7 +93,7 @@
           this._savedDynamic = null;
 
           this._onGrabStart = this._onGrabStart.bind(this);
-          this._onGripDown  = this._onGripDown.bind(this);
+          this._onGripDown = this._onGripDown.bind(this);
 
           this.el.addEventListener('grab-start', this._onGrabStart);
         },
@@ -110,10 +108,12 @@
             this.el.removeAttribute('dynamic-body');
           }
 
-          // Attacher l'objet dans la main
+          // Attacher l'objet dans la main (suivi parfait)
           hand.object3D.attach(this.el.object3D);
 
-          // Appliquer l'orientation ergonomique
+          // Offset/rotation locaux
+          const pos = this.data.position;
+          this.el.object3D.position.set(pos.x, pos.y, pos.z);
           const rot = this.data.rotation;
           this.el.object3D.rotation.set(
             THREE.MathUtils.degToRad(rot.x),
@@ -121,33 +121,12 @@
             THREE.MathUtils.degToRad(rot.z)
           );
 
-          // Aligner #grip sur l'origine de la main (0,0,0 en repère main)
-          const gripEl = this.data.grip;
-          if (gripEl && gripEl.object3D) {
-            // Position MONDE du grip
-            const gripWorld = new THREE.Vector3();
-            gripEl.object3D.updateWorldMatrix(true, true);
-            gripEl.object3D.getWorldPosition(gripWorld);
-
-            // Convertir en coords LOCALES de la main
-            const gripLocalInHand = gripWorld.clone();
-            hand.object3D.worldToLocal(gripLocalInHand);
-
-            // Déplacer l'arme pour que #grip tombe exactement sur (0,0,0) de la main
-            this.el.object3D.position.sub(gripLocalInHand);
-          }
-
-          // Offset optionnel additionnel (si tu veux encore peaufiner au mm)
-          const pos = this.data.position;
-          this.el.object3D.position.add(new THREE.Vector3(pos.x, pos.y, pos.z));
-
-          // Cacher la main pendant le hold
-          if (this.data.hideHand) {
-            try { hand.style.display = 'none'; } catch(e) { hand.setAttribute('visible', 'false'); }
-          }
+          // Cacher la main pendant le hold (évite chevauchement visuel)
+          try { hand.style.display = 'none'; } catch(e) { hand.setAttribute('visible', 'false'); }
 
           this._held = true;
           this._handEl = hand;
+
           // relâche = gripdown
           hand.addEventListener('gripdown', this._onGripDown);
         },
@@ -157,16 +136,14 @@
           // Détacher vers la scène
           this._handEl.sceneEl.object3D.attach(this.el.object3D);
 
-          // Restaurer la physique
+          // Restaurer la physique (gravité quand reposé)
           if (this._savedDynamic) {
             this.el.setAttribute('dynamic-body', this._savedDynamic);
             this._savedDynamic = null;
           }
 
           // Rendre la main visible
-          if (this.data.hideHand) {
-            try { this._handEl.style.display = ''; } catch(e) { this._handEl.setAttribute('visible', 'true'); }
-          }
+          try { this._handEl.style.display = ''; } catch(e) { this._handEl.setAttribute('visible', 'true'); }
 
           this._handEl.removeEventListener('gripdown', this._onGripDown);
           this._held = false;
@@ -177,13 +154,15 @@
       /* === Tir (depuis #muzzle, direction = getWorldDirection) === */
       AFRAME.registerComponent('gun-shoot', {
         schema: {
-          speed: { type: 'number', default: 20 },   // garde ta valeur
+          speed: { type: 'number', default: 55 },
           lifetime: { type: 'number', default: 4000 }
         },
         init: function () {
           this._onTriggerDown = this._onTriggerDown.bind(this);
+          // On met #muzzle sur l'enfant visuel (le modèle), mais le composant est sur le WRAPPER
           this.muzzle = this.el.querySelector('#muzzle');
 
+          // Abonnement au trigger uniquement quand l'arme est tenue
           this.el.addEventListener('grab-start', evt => {
             const hand = evt.detail && evt.detail.hand;
             if (hand) hand.addEventListener('triggerdown', this._onTriggerDown);
@@ -197,30 +176,36 @@
           const hold = this.el.components['toggle-hold'];
           if (!hold || !hold._held) return;
 
-          const muzzle = this.muzzle || this.el;
+          const muzzle = this.muzzle || this.el; // fallback
           const bullet = document.createElement('a-sphere');
           bullet.setAttribute('radius', 0.025);
           bullet.setAttribute('color', 'yellow');
           bullet.setAttribute('shadow', 'cast: true; receive: false');
+          // petit rayon pour réduire les collisions immédiates, masse faible
           bullet.setAttribute('dynamic-body', 'mass: 0.02; shape: sphere; sphereRadius: 0.025');
 
-          // position + micro-offset vers l'avant
+          // Position monde du muzzle + petit offset vers l'avant pour éviter collision avec le gun
           const pos = new THREE.Vector3();
-          const dir = new THREE.Vector3(0, 0, -1);
+          const dir = new THREE.Vector3(0, 0, 0);
           muzzle.object3D.getWorldPosition(pos);
           muzzle.object3D.getWorldDirection(dir);
           dir.normalize();
-          pos.addScaledVector(dir, 0.04);
+          const offset = 0; // 5 cm devant le canon
+          pos.addScaledVector(dir, offset);
 
           bullet.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
           this.el.sceneEl.appendChild(bullet);
 
+          // Appliquer vitesse quand le body est prêt
           const speed = this.data.speed;
           bullet.addEventListener('body-loaded', () => {
             bullet.setAttribute('velocity', `${dir.x * speed} ${dir.y * speed} ${dir.z * speed}`);
           });
 
-          setTimeout(() => { if (bullet.parentNode) bullet.parentNode.removeChild(bullet); }, this.data.lifetime);
+          // Nettoyage auto
+          setTimeout(() => {
+            if (bullet.parentNode) bullet.parentNode.removeChild(bullet);
+          }, this.data.lifetime);
         }
       });
     </script>
@@ -238,6 +223,7 @@
       <a-assets>
         <img id="skyTexture" src="./skynet.jpg" />
         <img id="groundTexture" src="./grass.jpg" />
+        <!-- Ton modèle GLTF (avec scene.bin dans le même dossier) -->
         <a-asset-item id="gunModel" src="./assets/scene.gltf"></a-asset-item>
       </a-assets>
 
@@ -284,28 +270,27 @@
       <a-box position="2.5 0.75 -1" width="1" height="0.1" depth="1" color="#8B4513"
              shadow="cast: true; receive: true" static-body></a-box>
 
-      <!-- === ARME (un seul entity qui porte la physique) === -->
-      <a-entity id="gun"
-        class="grabbable"
-        position="2.531 1.2 -1.0"
-        rotation="0 0 0"
-        scale="0.1 0.1 0.1"
-        shadow="cast: true; receive: true"
-        gltf-model="#gunModel"
-        dynamic-body="mass: 1; shape: box"
-        grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
-        toggle-hold="rotation: 30 90 -60; grip: #grip; hideHand: true"
-        gun-shoot="speed: 20; lifetime: 4000">
-
-        <!--
-          POINT GRIP = point exact (sur le modèle) où la main doit se positionner.
-          Ajuste ces 3 valeurs pour coller pile à ta crosse/gâchette.
-          Astuce: si la main est trop "au centre", diminue X/Y/Z petit à petit (0.01) jusqu’à ce que ça tombe juste.
-        -->
-        <a-entity id="grip"   position="-1.485 -0.437 -0.02"></a-entity>
-
-        <!-- Muzzle (bout du canon) : garde tes valeurs si ça tirait bien droit -->
-        <a-entity id="muzzle" position="0.50 0.417 -0.015" rotation="0 90 0"></a-entity>
+      <!-- === GUN ===
+           Wrapper invisible = physique + grab
+           Enfant = modèle (visuel) + #muzzle pour le tir
+      -->
+        <!-- Modèle visuel du pistolet -->
+        <a-entity id="gunVisual"
+          class="grabbable"
+          gltf-model="#gunModel"
+          scale="0.1 0.1 0.1"
+          rotation="0 90 0"
+          shadow="cast: true; receive: true"
+          position="2.531 1.2 -1.0"
+          shadow="cast: true; receive: true"
+          material="opacity: 0; transparent: true"
+          dynamic-body="mass: 1; shape: box"
+          grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
+          toggle-hold="position: 0 0 -0.05; rotation: 30 90 -60"
+          gun-shoot="speed: 20; lifetime: 4000">
+          <!-- Muzzle : ajuste la position/rotation pour qu'il soit précisément au bout du canon -->
+          <a-entity id="muzzle" position="0.5 0.417 -0.015" rotation="0 90 0"></a-entity>
+        </a-entity>
       </a-entity>
 
       <!-- Sol -->
