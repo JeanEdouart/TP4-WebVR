@@ -2,27 +2,32 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>Exercice 3</title>
+    <title>Exercice 3 – Wrapper physique + Grab fluide + Tir aligné</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-    <!-- A-Frame 1.7.0 -->
+    <!-- A-Frame -->
     <script src="https://aframe.io/releases/1.7.0/aframe.min.js"></script>
 
-    <!-- A-Frame 1.5+ : éviter le conflit de nom "grabbable" -->
-    <script> delete AFRAME.components["grabbable"]; </script>
+    <!-- Supprimer le grabbable natif (on utilise super-hands) -->
+    <script>
+      if (AFRAME.components && AFRAME.components['grabbable']) {
+        delete AFRAME.components['grabbable'];
+      }
+    </script>
 
     <!-- aframe-extras (sphere-collider) -->
     <script src="https://cdn.jsdelivr.net/gh/c-frame/aframe-extras@7.5.2/dist/aframe-extras.min.js"></script>
 
-    <!-- Physics system (CANNON/Ammo support) -->
+    <!-- Physics system (CANNON) -->
     <script src="https://cdn.jsdelivr.net/npm/@c-frame/aframe-physics-system@4.1.0/dist/aframe-physics-system.min.js"></script>
 
-    <!-- super-hands 3.x -->
+    <!-- super-hands -->
     <script src="https://unpkg.com/super-hands@3.0.5/dist/super-hands.min.js"></script>
 
-    <!-- Tes composants de déplacement + gun -->
+    <style> body{margin:0} </style>
+
     <script>
-      // Déplacement joystick gauche
+      /* === Déplacements (ton code) === */
       AFRAME.registerComponent('joystick-movement', {
         schema: { speed: { type: 'number', default: 2 } },
         init: function () {
@@ -31,6 +36,7 @@
           const leftHand = document.querySelector('#leftHand');
           const speed = this.data.speed;
           const DEADZONE = 0.1;
+          if (!leftHand) return;
 
           leftHand.addEventListener('thumbstickmoved', function (evt) {
             const dx = evt.detail.x, dy = evt.detail.y;
@@ -51,7 +57,6 @@
         }
       });
 
-      // Rotation par crans (joystick droit)
       AFRAME.registerComponent('snap-turn', {
         schema: { angle: { type: 'number', default: 30 }, cooldown: { type: 'number', default: 300 } },
         init: function () {
@@ -59,6 +64,8 @@
           const rightHand = document.querySelector('#rightHand');
           const angle = this.data.angle, cooldown = this.data.cooldown;
           let lastTurn = 0;
+          if (!rightHand) return;
+
           rightHand.addEventListener('thumbstickmoved', function (evt) {
             const now = Date.now(), x = evt.detail.x;
             if (Math.abs(x) < 0.8 || now - lastTurn < cooldown) return;
@@ -70,79 +77,135 @@
         }
       });
 
-      // Gun Shooting component
-      AFRAME.registerComponent('gun-shoot', {
+      /* === Toggle-hold : grab fluide (désactive-physique pendant le hold) ===
+         - Wrapper physique (invisible) conserve la gravité quand posé
+         - Au grab : on remove dynamic-body TEMPORAIREMENT, on attache à la main
+         - À la relâche : on réattache à la scène et on RESTAURE dynamic-body
+      */
+      AFRAME.registerComponent('toggle-hold', {
         schema: {
-          hand: { type: 'selector' },
-          bulletSpeed: { type: 'number', default: 40 }, // ajustable
-          bulletLifetime: { type: 'number', default: 5000 } // ms
+          position: { type: 'vec3', default: { x: 0, y: -0.02, z: -0.04 } }, // offset dans la main
+          rotation: { type: 'vec3', default: { x: 70, y: 180, z: 0 } }       // orientation ergonomique
         },
         init: function () {
-          const el = this.el;
-          const hand = this.data.hand;
-          const speed = this.data.bulletSpeed;
-          const lifetime = this.data.bulletLifetime;
+          this._held = false;
+          this._handEl = null;
+          this._savedDynamic = null;
 
-          // Position d'où sort la balle (doit être un enfant du modèle du gun)
-          const shootPos = el.querySelector('#shootPos');
+          this._onGrabStart = this._onGrabStart.bind(this);
+          this._onGripDown = this._onGripDown.bind(this);
 
-          // fallback si shootPos introuvable : tirer depuis la position locale du gun
-          const getStartPos = () => {
-            if (shootPos) {
-              return shootPos.object3D.getWorldPosition(new THREE.Vector3());
-            }
-            return el.object3D.getWorldPosition(new THREE.Vector3());
-          };
+          this.el.addEventListener('grab-start', this._onGrabStart);
+        },
+        _onGrabStart: function (evt) {
+          if (this._held) return;
+          const hand = evt.detail && evt.detail.hand;
+          if (!hand) return;
 
-          // Trigger (bouton déclencheur)
-          hand.addEventListener('triggerdown', () => {
-            // Tir uniquement si l'arme est saisie
-            if (!el.is('grabbed')) return;
+          // Sauver + retirer la physique (anti-jitter)
+          if (this.el.hasAttribute('dynamic-body')) {
+            this._savedDynamic = this.el.getAttribute('dynamic-body');
+            this.el.removeAttribute('dynamic-body');
+          }
 
-            // Création de la balle
-            const bullet = document.createElement('a-sphere');
-            const startPos = getStartPos();
+          // Attacher l'objet dans la main (suivi parfait)
+          hand.object3D.attach(this.el.object3D);
 
-            // Position & apparence
-            bullet.setAttribute('position', `${startPos.x} ${startPos.y} ${startPos.z}`);
-            bullet.setAttribute('radius', 0.05);
-            bullet.setAttribute('color', '#ff3333');
-            bullet.setAttribute('shadow', 'cast: true; receive: false');
+          // Offset/rotation locaux
+          const pos = this.data.position;
+          this.el.object3D.position.set(pos.x, pos.y, pos.z);
+          const rot = this.data.rotation;
+          this.el.object3D.rotation.set(
+            THREE.MathUtils.degToRad(rot.x),
+            THREE.MathUtils.degToRad(rot.y),
+            THREE.MathUtils.degToRad(rot.z)
+          );
 
-            // Physique : corps dynamique (masse petite)
-            bullet.setAttribute('dynamic-body', 'mass: 0.1; shape: sphere');
+          // Cacher la main pendant le hold (évite chevauchement visuel)
+          try { hand.style.display = 'none'; } catch(e) { hand.setAttribute('visible', 'false'); }
 
-            // Ajout à la scène
-            el.sceneEl.appendChild(bullet);
+          this._held = true;
+          this._handEl = hand;
 
-            // Calculer direction avant du shootPos (ou du gun) et appliquer vitesse
-            const direction = new THREE.Vector3();
-            if (shootPos) {
-              shootPos.object3D.getWorldDirection(direction);
-            } else {
-              // fallback : direction avant du gun wrapper
-              el.object3D.getWorldDirection(direction);
-            }
-            direction.normalize();
+          // relâche = gripdown
+          hand.addEventListener('gripdown', this._onGripDown);
+        },
+        _onGripDown: function () {
+          if (!this._held || !this._handEl) return;
 
-            // Appliquer la vitesse lorsque le body est chargé
-            bullet.addEventListener('body-loaded', () => {
-              // Méthode simple : setAttribute velocity (supportée par aframe-physics-system)
-              const vx = direction.x * speed;
-              const vy = direction.y * speed;
-              const vz = direction.z * speed;
-              bullet.setAttribute('velocity', `${vx} ${vy} ${vz}`);
+          // Détacher vers la scène
+          this._handEl.sceneEl.object3D.attach(this.el.object3D);
 
-              // Optionnel : on peut aussi appliquer un impulse via cannon body si nécessaire
-              // const body = bullet.body;
-              // body.velocity.set(vx, vy, vz);
-            });
+          // Restaurer la physique (gravité quand reposé)
+          if (this._savedDynamic) {
+            this.el.setAttribute('dynamic-body', this._savedDynamic);
+            this._savedDynamic = null;
+          }
 
-            // Nettoyage après un certain temps
-            setTimeout(() => {
-              if (bullet.parentNode) bullet.parentNode.removeChild(bullet);
-            }, lifetime);
+          // Rendre la main visible
+          try { this._handEl.style.display = ''; } catch(e) { this._handEl.setAttribute('visible', 'true'); }
+
+          this._handEl.removeEventListener('gripdown', this._onGripDown);
+          this._held = false;
+          this._handEl = null;
+        }
+      });
+
+      /* === Tir (depuis #muzzle, direction = getWorldDirection) === */
+      AFRAME.registerComponent('gun-shoot', {
+        schema: {
+          speed: { type: 'number', default: 55 },
+          lifetime: { type: 'number', default: 4000 }
+        },
+        init: function () {
+          this._onTriggerDown = this._onTriggerDown.bind(this);
+          // On met #muzzle sur l'enfant visuel (le modèle), mais le composant est sur le WRAPPER
+          this.muzzle = this.el.querySelector('#muzzle');
+
+          // Abonnement au trigger uniquement quand l'arme est tenue
+          this.el.addEventListener('grab-start', evt => {
+            const hand = evt.detail && evt.detail.hand;
+            if (hand) hand.addEventListener('triggerdown', this._onTriggerDown);
           });
+          this.el.addEventListener('grab-end', evt => {
+            const hand = evt.detail && evt.detail.hand;
+            if (hand) hand.removeEventListener('triggerdown', this._onTriggerDown);
+          });
+        },
+        _onTriggerDown: function () {
+          const hold = this.el.components['toggle-hold'];
+          if (!hold || !hold._held) return;
+
+          const muzzle = this.muzzle || this.el; // fallback
+          const bullet = document.createElement('a-sphere');
+          bullet.setAttribute('radius', 0.025);
+          bullet.setAttribute('color', 'yellow');
+          bullet.setAttribute('shadow', 'cast: true; receive: false');
+          // petit rayon pour réduire les collisions immédiates, masse faible
+          bullet.setAttribute('dynamic-body', 'mass: 0.02; shape: sphere; sphereRadius: 0.025');
+
+          // Position monde du muzzle + petit offset vers l'avant pour éviter collision avec le gun
+          const pos = new THREE.Vector3();
+          const dir = new THREE.Vector3(0, 0, -1);
+          muzzle.object3D.getWorldPosition(pos);
+          muzzle.object3D.getWorldDirection(dir);
+          dir.normalize();
+          const offset = 0.05; // 5 cm devant le canon
+          pos.addScaledVector(dir, offset);
+
+          bullet.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
+          this.el.sceneEl.appendChild(bullet);
+
+          // Appliquer vitesse quand le body est prêt
+          const speed = this.data.speed;
+          bullet.addEventListener('body-loaded', () => {
+            bullet.setAttribute('velocity', `${dir.x * speed} ${dir.y * speed} ${dir.z * speed}`);
+          });
+
+          // Nettoyage auto
+          setTimeout(() => {
+            if (bullet.parentNode) bullet.parentNode.removeChild(bullet);
+          }, this.data.lifetime);
         }
       });
     </script>
@@ -156,11 +219,11 @@
       device-orientation-permission-ui="enabled: true"
       physics="gravity: -9.8; debug: false"
     >
-      <!-- Assets : remplace les chemins si besoin -->
+      <!-- Assets -->
       <a-assets>
         <img id="skyTexture" src="./skynet.jpg" />
         <img id="groundTexture" src="./grass.jpg" />
-        <!-- Ton modèle GLTF : scene.gltf (doit être accompagné de scene.bin dans le même dossier) -->
+        <!-- Ton modèle GLTF (avec scene.bin dans le même dossier) -->
         <a-asset-item id="gunModel" src="./assets/scene.gltf"></a-asset-item>
       </a-assets>
 
@@ -172,7 +235,6 @@
       <a-entity id="rig" position="0 1 0" joystick-movement="speed: 2" snap-turn="angle: 30; cooldown: 300">
         <a-entity id="head" camera wasd-controls-enabled="false" look-controls></a-entity>
 
-        <!-- Mains : super-hands limité au bouton grip (side) + collision par sphère -->
         <a-entity id="leftHand"
           oculus-touch-controls="hand: left"
           super-hands="grabStartButtons: gripdown, squeezestart; grabEndButtons: gripup, squeezeend"
@@ -188,26 +250,30 @@
         </a-entity>
       </a-entity>
 
-      <!-- OBJETS SAISISSABLES (physiques) -->
+      <!-- Objets grabbables (physiques) -->
       <a-box class="grabbable" position="-1 0.6 -1.6" rotation="0 45 0" color="#4CC3D9"
              shadow="cast: true; receive: true"
              grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
-             dynamic-body="mass: 1; shape: box">
-      </a-box>
+             dynamic-body="mass: 1; shape: box"></a-box>
 
       <a-sphere class="grabbable" position="0 1.2 -2" radius="0.5" color="#EF2D5E"
                 shadow="cast: true; receive: true"
                 grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
-                dynamic-body="mass: 0.5; shape: sphere">
-      </a-sphere>
+                dynamic-body="mass: 0.5; shape: sphere"></a-sphere>
 
       <a-cylinder class="grabbable" position="1 0.9 -2.4" radius="0.4" height="1" color="#FFC65D"
                   shadow="cast: true; receive: true"
                   grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
-                  dynamic-body="mass: 0.75; shape: cylinder">
-      </a-cylinder>
+                  dynamic-body="mass: 0.75; shape: cylinder"></a-cylinder>
 
-      <!-- Gun wrapper (saisissable) : adapte position/scale selon ton modèle -->
+      <!-- Table -->
+      <a-box position="2.5 0.75 -1" width="1" height="0.1" depth="1" color="#8B4513"
+             shadow="cast: true; receive: true" static-body></a-box>
+
+      <!-- === GUN ===
+           Wrapper invisible = physique + grab
+           Enfant = modèle (visuel) + #muzzle pour le tir
+      -->
       <a-entity id="GunWrapper"
         class="grabbable"
         position="2.531 1.2 -1.0"
@@ -215,32 +281,27 @@
         scale="1 1 1"
         shadow="cast: true; receive: true"
         geometry="primitive: box; width: 0.5; height: 0.15; depth: 0.05"
-        material="opacity: 0; transparent: false"
-        grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
+        material="opacity: 0; transparent: true"
         dynamic-body="mass: 1; shape: box"
-        gun-shoot="hand: #rightHand; bulletSpeed: 45; bulletLifetime: 5000">
+        grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
+        toggle-hold="position: 0 -0.02 -0.04; rotation: 70 180 0"
+        gun-shoot="speed: 55; lifetime: 4000">
 
-        <!-- Modèle GLTF du pistolet -->
-        <a-entity id="gunModelInScene"
+        <!-- Modèle visuel du pistolet -->
+        <a-entity id="gunVisual"
           gltf-model="#gunModel"
           position="0 0 0"
           rotation="0 0 0"
           scale="0.1 0.1 0.1"
           shadow="cast: true; receive: true">
-          <!-- shootPos : point d'émission des balles (à ajuster selon l'orientation du model) -->
-          <a-entity id="shootPos" position="0.2 0.05 -0.35"></a-entity>
+          <!-- Muzzle : ajuste la position/rotation pour qu'il soit précisément au bout du canon -->
+          <a-entity id="muzzle" position="0.20 0.05 -0.35" rotation="0 0 0"></a-entity>
         </a-entity>
       </a-entity>
-      <!-- Table sur laquelle le pistolet est posé -->
-      <a-box position="2.5 0.75 -1" rotation="0 0 0" width="1" height="0.1" depth="1" color="#8B4513"
-             shadow="cast: true; receive: true" static-body>
-      </a-box>
 
       <!-- Sol -->
       <a-plane position="0 0 -1" rotation="-90 0 0" width="100" height="100" src="#groundTexture"
-               shadow="cast: false; receive: true"
-               static-body>
-      </a-plane>
+               shadow="cast: false; receive: true" static-body></a-plane>
 
       <a-sky src="#skyTexture"></a-sky>
     </a-scene>
