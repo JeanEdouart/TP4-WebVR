@@ -77,11 +77,7 @@
         }
       });
 
-      /* === Toggle-hold avec ALIGNEMENT SUR #grip ===
-         - garde ton angle via 'rotation' (parfait)
-         - aligne le point #grip exactement sous l'origine de la main
-         - physique désactivée pendant hold (anti-jitter), restaurée à la relâche
-      */
+      /* === Toggle-hold avec ALIGNEMENT SUR #grip === */
       AFRAME.registerComponent('toggle-hold', {
         schema: {
           position: { type: 'vec3', default: { x: 0, y: 0, z: 0 } }, // offset additionnel optionnel
@@ -193,7 +189,10 @@
 
           this.muzzle = this.el.querySelector('#muzzle');
 
-          // >>> NOUVEAU : on réagit au "toggle-hold"
+          // >>> AJOUT SON : on récupère le lecteur audio du tir
+          this.shotAudioEl = this.el.querySelector('#shotAudio');
+
+          // on réagit au "toggle-hold"
           this.el.addEventListener('hold-start', this._onHoldStart);
           this.el.addEventListener('hold-end',   this._onHoldEnd);
         },
@@ -221,6 +220,13 @@
         _onTriggerDown: function () {
           const hold = this.el.components['toggle-hold'];
           if (!hold || !hold._held) return; // sécurité
+
+          // >>> AJOUT SON : jouer le son (stop + play pour redémarrer net)
+          if (this.shotAudioEl && this.shotAudioEl.components && this.shotAudioEl.components.sound) {
+            const s = this.shotAudioEl.components.sound;
+            if (s.isPlaying) s.stopSound();
+            s.playSound();
+          }
 
           const muzzle = this.muzzle || this.el;
           const bullet = document.createElement('a-sphere');
@@ -278,6 +284,9 @@
         <img id="skyTexture" src="./assets/skynet.jpg" />
         <img id="groundTexture" src="./assets/grass.jpg" />
         <a-asset-item id="gunModel" src="./assets/scene.gltf"></a-asset-item>
+
+        <!-- >>> AJOUT SON DE TIR -->
+        <audio id="shotSfx" src="./assets/shot.mp3" preload="auto"></audio>
       </a-assets>
 
       <!-- Lumières -->
@@ -336,15 +345,17 @@
         toggle-hold="rotation: 30 90 -60; grip: #grip; hideHand: true"
         gun-shoot="speed: 20; lifetime: 4000">
 
-        <!--
-          POINT GRIP = point exact (sur le modèle) où la main doit se positionner.
-          Ajuste ces 3 valeurs pour coller pile à ta crosse/gâchette.
-          Astuce: si la main est trop "au centre", diminue X/Y/Z petit à petit (0.01) jusqu’à ce que ça tombe juste.
-        -->
+        <!-- POINT GRIP -->
         <a-entity id="grip"   position="-1.485 -0.437 -0.02"></a-entity>
 
-        <!-- Muzzle (bout du canon) : garde tes valeurs si ça tirait bien droit -->
-        <a-entity id="muzzle" position="0.50 0.417 -0.015" rotation="0 90 0"></a-entity>
+        <!-- Muzzle (bout du canon) -->
+        <a-entity id="muzzle" position="0.50 0.417 -0.015" rotation="0 90 0">
+          <!-- >>> AJOUT : lecteur audio du tir -->
+          <a-entity id="shotAudio"
+            sound="src: #shotSfx; autoplay: false; positional: true;
+                   volume: 0.8; refDistance: 1.2; rolloffFactor: 1.6; distanceModel: inverse">
+          </a-entity>
+        </a-entity>
       </a-entity>
 
       <!-- Sol -->
