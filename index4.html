@@ -27,7 +27,7 @@
     <style> body{margin:0} </style>
 
     <script>
-      /* === Déplacements (inchangé) === */
+      /* === Déplacements === */
       AFRAME.registerComponent('joystick-movement', {
         schema: { speed: { type: 'number', default: 2 } },
         init: function () {
@@ -77,11 +77,11 @@
         }
       });
 
-      /* === Toggle-hold avec ALIGNEMENT SUR #grip === */
+      /* === Toggle-hold (aligné sur #grip) === */
       AFRAME.registerComponent('toggle-hold', {
         schema: {
           position: { type: 'vec3', default: { x: 0, y: 0, z: 0 } },
-          rotation: { type: 'vec3', default: { x: 0, y: 0, z: 0  } },
+          rotation: { type: 'vec3', default: { x: 0, y: 0, z: 0 } },
           grip:     { type: 'selector', default: null },
           hideHand: { type: 'boolean', default: true }
         },
@@ -89,10 +89,8 @@
           this._held = false;
           this._handEl = null;
           this._savedDynamic = null;
-
           this._onGrabStart = this._onGrabStart.bind(this);
           this._onGripDown  = this._onGripDown.bind(this);
-
           this.el.addEventListener('grab-start', this._onGrabStart);
         },
         _onGrabStart: function (evt) {
@@ -100,16 +98,13 @@
           const hand = evt.detail && evt.detail.hand;
           if (!hand) return;
 
-          // Sauver + retirer la physique (anti-jitter)
           if (this.el.hasAttribute('dynamic-body')) {
             this._savedDynamic = this.el.getAttribute('dynamic-body');
             this.el.removeAttribute('dynamic-body');
           }
 
-          // Attacher l'objet dans la main
           hand.object3D.attach(this.el.object3D);
 
-          // Orientation ergonomique
           const rot = this.data.rotation;
           this.el.object3D.rotation.set(
             THREE.MathUtils.degToRad(rot.x),
@@ -117,69 +112,53 @@
             THREE.MathUtils.degToRad(rot.z)
           );
 
-          // Aligner #grip sur l'origine de la main
           const gripEl = this.data.grip;
           if (gripEl && gripEl.object3D) {
             const gripWorld = new THREE.Vector3();
             gripEl.object3D.updateWorldMatrix(true, true);
             gripEl.object3D.getWorldPosition(gripWorld);
-
             const gripLocalInHand = gripWorld.clone();
             hand.object3D.worldToLocal(gripLocalInHand);
-
             this.el.object3D.position.sub(gripLocalInHand);
           }
 
-          // Offset fin
           const pos = this.data.position;
           this.el.object3D.position.add(new THREE.Vector3(pos.x, pos.y, pos.z));
 
-          // Cacher la main
           if (this.data.hideHand) {
             try { hand.style.display = 'none'; } catch(e) { hand.setAttribute('visible', 'false'); }
           }
 
           this._held = true;
           this._handEl = hand;
-
-          // Signaler le hold
           this.el.emit('hold-start', { hand });
-
-          // Toggle release = gripdown
           hand.addEventListener('gripdown', this._onGripDown);
         },
         _onGripDown: function () {
           if (!this._held || !this._handEl) return;
-
-          // Détacher vers la scène
           this._handEl.sceneEl.object3D.attach(this.el.object3D);
 
-          // Restaurer la physique
           if (this._savedDynamic) {
             this.el.setAttribute('dynamic-body', this._savedDynamic);
             this._savedDynamic = null;
           }
 
-          // Rendre la main visible
           if (this.data.hideHand) {
             try { this._handEl.style.display = ''; } catch(e) { this._handEl.setAttribute('visible', 'true'); }
           }
 
-          // Signaler fin de hold
           this.el.emit('hold-end', { hand: this._handEl });
-
           this._handEl.removeEventListener('gripdown', this._onGripDown);
           this._held = false;
           this._handEl = null;
         }
       });
 
-      /* === Effets: petite fabrique de particules "sparks" === */
+      /* === Particules simples === */
       function spawnParticles(sceneEl, worldPos, count = 12, life = 500) {
         for (let i = 0; i < count; i++) {
           const p = document.createElement('a-sphere');
           p.setAttribute('radius', 0.02);
-          // Jaune / orange / rouge aléatoire
           const colors = ['#FFD322', '#FF8A00', '#FF3B30'];
           p.setAttribute('color', colors[Math.floor(Math.random()*colors.length)]);
           p.setAttribute('material', 'opacity:1; transparent:true');
@@ -192,19 +171,19 @@
           p.setAttribute('animation__move', `property: position; to: ${worldPos.x+dx} ${worldPos.y+dy} ${worldPos.z+dz}; dur: ${life}; easing: easeOutQuad`);
           p.setAttribute('animation__fade', `property: material.opacity; from: 1; to: 0; dur: ${life}; easing: linear`);
           sceneEl.appendChild(p);
-
           setTimeout(() => { if (p.parentNode) p.parentNode.removeChild(p); }, life + 60);
         }
       }
 
-      /* === Cible : joue un son + particules, puis se détruit et notifie le spawner === */
+      /* === Cible : son + particules + auto-destruction === */
       AFRAME.registerComponent('target', {
         schema: {
-          hitsound: { type: 'selector' },       // <audio id="hitSfx">
+          hitsound: { type: 'selector' },
           particles: { type: 'int', default: 12 },
           life: { type: 'number', default: 500 }
         },
         init: function () {
+          this._dead = false;
           this.el.classList.add('target');
           if (!this.el.hasAttribute('static-body')) this.el.setAttribute('static-body', '');
           this._onBulletHit = this._onBulletHit.bind(this);
@@ -214,12 +193,14 @@
           this.el.removeEventListener('bullet-hit', this._onBulletHit);
         },
         _onBulletHit: function (evt) {
+          if (this._dead) return;
+          this._dead = true;
+
           const scene = this.el.sceneEl;
           const pos = new THREE.Vector3();
           if (evt.detail && evt.detail.worldPos) pos.copy(evt.detail.worldPos);
           else this.el.object3D.getWorldPosition(pos);
 
-          // Son 3D au point d'impact (entité éphémère)
           if (this.data.hitsound) {
             const s = document.createElement('a-entity');
             s.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
@@ -230,31 +211,43 @@
             setTimeout(() => { if (s.parentNode) s.parentNode.removeChild(s); }, 1500);
           }
 
-          // Particules
           spawnParticles(scene, pos, this.data.particles, this.data.life);
-
-          // Notifier destruction (le spawner tiendra le compte)
           scene.emit('target-destroyed', { el: this.el });
-
-          // Détruire la cible
           if (this.el.parentNode) this.el.parentNode.removeChild(this.el);
         }
       });
 
-      /* === Spawner : maintient N cibles dans une zone, respawn après délai === */
+      /* === Flottement style AimLab === */
+      AFRAME.registerComponent('hover-bob', {
+        schema: {
+          amp:   { type: 'number', default: 0.18 }, // amplitude en m
+          speed: { type: 'number', default: 0.5 },  // cycles/s
+          phase: { type: 'number', default: 0 }     // déphasage aléatoire
+        },
+        init: function(){
+          this.baseY = this.el.object3D.position.y;
+        },
+        tick: function (t) {
+          const time = t/1000;
+          this.el.object3D.position.y = this.baseY + this.data.amp * Math.sin((time + this.data.phase) * this.data.speed * 2*Math.PI);
+        }
+      });
+
+      /* === Spawner de cibles aériennes === */
       AFRAME.registerComponent('target-spawner', {
         schema: {
-          areaMin: { type: 'vec3', default: { x: -3, y: 0.5, z: -6 } },
-          areaMax: { type: 'vec3', default: { x:  3, y: 1.5, z: -2 } },
-          maxTargets: { type: 'int', default: 5 },
-          respawnDelay: { type: 'number', default: 1500 },
-          shapes: { type: 'string', default: 'box,cone,cylinder' } // primitives possibles
+          areaMin: { type: 'vec3', default: { x: -3, y: 1.2, z: -6 } },
+          areaMax: { type: 'vec3', default: { x:  3, y: 2.2, z: -2 } },
+          maxTargets: { type: 'int', default: 6 },
+          respawnDelay: { type: 'number', default: 1000 },
+          shapes: { type: 'string', default: 'box,cylinder,sphere' },
+          minPlayerDist: { type: 'number', default: 1.6 } // éviter spawn trop près
         },
         init: function () {
           this._targets = new Set();
           this._onDestroyed = this._onDestroyed.bind(this);
+          this.rig = document.querySelector('#rig');
           this.el.sceneEl.addEventListener('target-destroyed', this._onDestroyed);
-          // Premier remplissage
           this._fill();
         },
         remove: function () {
@@ -270,129 +263,146 @@
           const shapes = this.data.shapes.split(',').map(s => s.trim());
           const shape = shapes[Math.floor(Math.random() * shapes.length)];
 
-          // Créer une primitive
           let t;
-          switch (shape) {
-            case 'cone':      t = document.createElement('a-cone'); break;
-            case 'cylinder':  t = document.createElement('a-cylinder'); break;
-            default:          t = document.createElement('a-box');
+          switch (shape) { // formes simples, visibles, “cibles”
+            case 'cylinder': t = document.createElement('a-cylinder'); t.setAttribute('height','0.25'); t.setAttribute('radius','0.25'); break;
+            case 'sphere':   t = document.createElement('a-sphere');   t.setAttribute('radius','0.28'); break;
+            default:         t = document.createElement('a-box');      t.setAttribute('depth','0.25');  t.setAttribute('height','0.25'); t.setAttribute('width','0.25');
           }
 
-          const pos = this._randomPos();
-          const scale = 0.6 + Math.random() * 0.6; // tailles 0.6 à 1.2
+          // placement avec contrainte de distance au joueur
+          let pos, ok=false, tries=0;
+          while (!ok && tries < 15) {
+            pos = this._randomPos();
+            tries++;
+            if (!this.rig) { ok = true; break; }
+            const rp = this.rig.object3D.position;
+            const dx=pos.x - rp.x, dy=pos.y - (rp.y+1.3), dz=pos.z - rp.z; // regard approximatif
+            const dist = Math.sqrt(dx*dx+dy*dy+dz*dz);
+            ok = dist >= this.data.minPlayerDist;
+          }
+
+          const hue = Math.floor(Math.random()*360);
           t.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
-          t.setAttribute('scale', `${scale} ${scale} ${scale}`);
           t.setAttribute('rotation', `0 ${Math.floor(Math.random()*360)} 0`);
-          t.setAttribute('color', `hsl(${Math.floor(Math.random()*360)}, 70%, 55%)`);
+          t.setAttribute('color', `hsl(${hue}, 70%, 55%)`);
           t.setAttribute('shadow', 'cast:true; receive:true');
-
-          // Marquer comme cible + son à l'impact
-          t.setAttribute('target', 'hitsound: #hitSfx; particles: 14; life: 550');
-
-          // Physique pour collision avec les balles
+          t.setAttribute('target', 'hitsound: #hitSfx; particles: 16; life: 550');
           t.setAttribute('static-body', '');
+          t.setAttribute('hover-bob', `amp: ${0.14 + Math.random()*0.12}; speed: ${0.45 + Math.random()*0.25}; phase: ${Math.random()}`);
 
           scene.appendChild(t);
           this._targets.add(t);
         },
-        _fill: function () {
-          while (this._targets.size < this.data.maxTargets) this._spawnOne();
-        },
+        _fill: function () { while (this._targets.size < this.data.maxTargets) this._spawnOne(); },
         _onDestroyed: function (e) {
           const el = e.detail && e.detail.el;
           if (el && this._targets.has(el)) {
             this._targets.delete(el);
-            // Respawn après délai
             setTimeout(() => this._fill(), this.data.respawnDelay);
           }
         }
       });
 
-      /* === Tir (depuis #muzzle) — MAJ: les balles détectent l'impact et préviennent la cible === */
+      /* === Tir — son relançable, balle garde sa durée de vie === */
       AFRAME.registerComponent('gun-shoot', {
         schema: { speed: {type:'number', default:20}, lifetime: {type:'number', default:4000} },
         init: function () {
-            this._onTriggerDown = this._onTriggerDown.bind(this);
-            this._onHoldStart   = this._onHoldStart.bind(this);
-            this._onHoldEnd     = this._onHoldEnd.bind(this);
-            this._hand = null;
+          this._onTriggerDown = this._onTriggerDown.bind(this);
+          this._onHoldStart   = this._onHoldStart.bind(this);
+          this._onHoldEnd     = this._onHoldEnd.bind(this);
+          this._hand = null;
 
-            this.muzzle = this.el.querySelector('#muzzle');
-            this.shotAudioEl = this.el.querySelector('#shotAudio');   // >>> NOUVEAU
+          this.muzzle = this.el.querySelector('#muzzle');
+          // On supporte 2 configurations: #shotAudio dédié OU sound directement sur #muzzle.
+          this.shotAudioEl = this.el.querySelector('#shotAudio');
 
-            this.el.addEventListener('hold-start', this._onHoldStart);
-            this.el.addEventListener('hold-end',   this._onHoldEnd);
+          this._playShot = () => {
+            // Priorité: #shotAudio si présent
+            const sndNode =
+              (this.shotAudioEl && this.shotAudioEl.components && this.shotAudioEl.components.sound)
+              || (this.muzzle && this.muzzle.components && this.muzzle.components.sound
+                  ? this.muzzle.components.sound : null);
+            if (sndNode) {
+              if (sndNode.isPlaying) sndNode.stopSound();
+              sndNode.playSound();
+            }
+          };
+
+          this.el.addEventListener('hold-start', this._onHoldStart);
+          this.el.addEventListener('hold-end',   this._onHoldEnd);
         },
         remove: function () {
-            this.el.removeEventListener('hold-start', this._onHoldStart);
-            this.el.removeEventListener('hold-end',   this._onHoldEnd);
-            if (this._hand) {
+          this.el.removeEventListener('hold-start', this._onHoldStart);
+          this.el.removeEventListener('hold-end',   this._onHoldEnd);
+          if (this._hand) {
             this._hand.removeEventListener('triggerdown', this._onTriggerDown);
             this._hand = null;
-            }
+          }
         },
         _onHoldStart: function (evt) {
-            const hand = evt.detail && evt.detail.hand;
-            if (!hand) return;
-            this._hand = hand;
-            hand.addEventListener('triggerdown', this._onTriggerDown);
+          const hand = evt.detail && evt.detail.hand;
+          if (!hand) return;
+          this._hand = hand;
+          hand.addEventListener('triggerdown', this._onTriggerDown);
         },
         _onHoldEnd: function () {
-            if (this._hand) {
+          if (this._hand) {
             this._hand.removeEventListener('triggerdown', this._onTriggerDown);
             this._hand = null;
-            }
+          }
         },
         _onTriggerDown: function () {
-            const hold = this.el.components['toggle-hold'];
-            if (!hold || !hold._held) return;
+          const hold = this.el.components['toggle-hold'];
+          if (!hold || !hold._held) return;
 
-            // >>> NOUVEAU : son de tir (coupe puis rejoue)
-            if (this.shotAudioEl && this.shotAudioEl.components && this.shotAudioEl.components.sound) {
-            const s = this.shotAudioEl.components.sound;
-            if (s.isPlaying) s.stopSound();
-            s.playSound();
-            }
+          // Son de tir (stop puis play pour relancer instantanément)
+          this._playShot();
 
-            // --- (le reste inchangé) création + tir de la balle ---
-            const muzzle = this.muzzle || this.el;
-            const bullet = document.createElement('a-sphere');
-            bullet.setAttribute('radius', 0.025);
-            bullet.setAttribute('color', 'yellow');
-            bullet.setAttribute('shadow', 'cast: true; receive: false');
-            bullet.setAttribute('dynamic-body', 'mass: 0.02; shape: sphere; sphereRadius: 0.025');
+          // Création + lancement de la balle
+          const muzzle = this.muzzle || this.el;
+          const bullet = document.createElement('a-sphere');
+          bullet.setAttribute('radius', 0.025);
+          bullet.setAttribute('color', 'yellow');
+          bullet.setAttribute('shadow', 'cast: true; receive: false');
+          bullet.setAttribute('dynamic-body', 'mass: 0.02; shape: sphere; sphereRadius: 0.025');
 
-            const pos = new THREE.Vector3();
-            const dir = new THREE.Vector3(0, 0, -1);
-            muzzle.object3D.getWorldPosition(pos);
-            muzzle.object3D.getWorldDirection(dir);
-            dir.normalize();
-            pos.addScaledVector(dir, 0.04);
+          const pos = new THREE.Vector3();
+          const dir = new THREE.Vector3(0, 0, -1);
+          muzzle.object3D.getWorldPosition(pos);
+          muzzle.object3D.getWorldDirection(dir);
+          dir.normalize();
+          pos.addScaledVector(dir, 0.04);
 
-            bullet.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
-            this.el.sceneEl.appendChild(bullet);
+          bullet.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
+          this.el.sceneEl.appendChild(bullet);
 
-            let handled = false;
-            bullet.addEventListener('collide', (e) => {
-            if (handled) return;
+          const onCollide = (e) => {
+            // 1er contact : si cible, on la notifie, mais on NE SUPPRIME PAS la balle
             const other = e.detail && e.detail.body && e.detail.body.el;
             if (other && other.components && other.components['target']) {
-                const p = new THREE.Vector3();
-                bullet.object3D.getWorldPosition(p);
-                other.emit('bullet-hit', { worldPos: p });
+              const p = new THREE.Vector3();
+              bullet.object3D.getWorldPosition(p);
+              other.emit('bullet-hit', { worldPos: p });
             }
-            handled = true;
-            if (bullet.parentNode) bullet.parentNode.removeChild(bullet);
-            });
+            // Désactiver nouvelles collisions pour éviter re-triggers
+            try {
+              const body = bullet.body || (bullet.components['dynamic-body'] && bullet.components['dynamic-body'].body);
+              if (body) { body.collisionResponse = false; body.collisionFilterMask = 0; }
+            } catch (err) {}
+            bullet.removeEventListener('collide', onCollide);
+          };
+          bullet.addEventListener('collide', onCollide);
 
-            const speed = this.data.speed;
-            bullet.addEventListener('body-loaded', () => {
+          const speed = this.data.speed;
+          bullet.addEventListener('body-loaded', () => {
             bullet.setAttribute('velocity', `${dir.x * speed} ${dir.y * speed} ${dir.z * speed}`);
-            });
+          });
 
-            setTimeout(() => { if (bullet.parentNode) bullet.parentNode.removeChild(bullet); }, this.data.lifetime);
+          // Auto-destruction après lifetime (même si collision)
+          setTimeout(() => { if (bullet.parentNode) bullet.parentNode.removeChild(bullet); }, this.data.lifetime);
         }
-        });
+      });
     </script>
   </head>
 
@@ -410,10 +420,9 @@
         <img id="groundTexture" src="./grass.jpg" />
         <a-asset-item id="gunModel" src="./assets/scene.gltf"></a-asset-item>
 
-        <!-- >>> AJOUT : son d'impact (mets ton fichier dans ./assets/) -->
-        <audio id="hitSfx" src="./assets/hit.mp3" preload="auto"></audio>
+        <!-- Sons -->
+        <audio id="hitSfx"  src="./assets/hit.mp3"  preload="auto"></audio>
         <audio id="shotSfx" src="./assets/shot.mp3" preload="auto"></audio>
-        <!-- Astuce: si Safari pose souci, utilise un .wav -->
       </a-assets>
 
       <!-- Lumières -->
@@ -473,28 +482,30 @@
         gun-shoot="speed: 20; lifetime: 4000">
 
         <a-entity id="grip"   position="-1.485 -0.437 -0.02"></a-entity>
-        <a-entity id="muzzle" position="0.50 0.417 -0.015" rotation="0 90 0" sound="src: #shotSfx; 
-                                                                                    autoplay: false; 
-                                                                                    positional: true;
-                                                                                    poolSize: 1; 
-                                                                                    volume: 0.8;
-                                                                                    refDistance: 1.2; 
-                                                                                    rolloffFactor: 1.6; 
-                                                                                    distanceModel: inverse"></a-entity>
+        <a-entity id="muzzle" position="0.50 0.417 -0.015" rotation="0 90 0">
+          <!-- Option A (recommandé) : nœud audio dédié -->
+          <a-entity id="shotAudio"
+            sound="src: #shotSfx; autoplay: false; positional: true;
+                   volume: 0.8; refDistance: 1.2; rolloffFactor: 1.6; distanceModel: inverse">
+          </a-entity>
+          <!-- Option B : si tu préfères, tu peux mettre directement sound sur #muzzle ;
+               le code le détectera aussi. -->
+        </a-entity>
       </a-entity>
 
       <!-- Sol -->
       <a-plane position="0 0 -1" rotation="-90 0 0" width="100" height="100" src="#groundTexture"
                shadow="cast: false; receive: true" static-body></a-plane>
 
-      <!-- >>> AJOUT : Spawner de cibles (zone + quotas + délai de respawn) -->
+      <!-- Spawner de cibles aériennes -->
       <a-entity id="targetSpawner"
         target-spawner="
-          areaMin: -3 0.5 -6;
-          areaMax:  3 1.5 -2;
+          areaMin: -3 1.2 -6;
+          areaMax:  3 2.2 -2;
           maxTargets: 6;
-          respawnDelay: 1200;
-          shapes: box,cone,cylinder">
+          respawnDelay: 1000;
+          shapes: box,cylinder,sphere;
+          minPlayerDist: 1.6">
       </a-entity>
 
       <a-sky src="#skyTexture"></a-sky>
