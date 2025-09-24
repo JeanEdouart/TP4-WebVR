@@ -77,16 +77,12 @@
         }
       });
 
-      /* === Toggle-hold avec ALIGNEMENT SUR #grip ===
-         - garde ton angle via 'rotation' (parfait)
-         - aligne le point #grip exactement sous l'origine de la main
-         - physique désactivée pendant hold (anti-jitter), restaurée à la relâche
-      */
+      /* === Toggle-hold avec ALIGNEMENT SUR #grip === */
       AFRAME.registerComponent('toggle-hold', {
         schema: {
-          position: { type: 'vec3', default: { x: 0, y: 0, z: 0 } }, // offset additionnel optionnel
-          rotation: { type: 'vec3', default: { x: 0, y: 0, z: 0  } }, // ton angle "parfait"
-          grip:     { type: 'selector', default: null }, // <a-entity id="grip"> sous le modèle
+          position: { type: 'vec3', default: { x: 0, y: 0, z: 0 } },
+          rotation: { type: 'vec3', default: { x: 0, y: 0, z: 0  } },
+          grip:     { type: 'selector', default: null },
           hideHand: { type: 'boolean', default: true }
         },
         init: function () {
@@ -113,7 +109,7 @@
           // Attacher l'objet dans la main
           hand.object3D.attach(this.el.object3D);
 
-          // Appliquer l'orientation ergonomique
+          // Orientation ergonomique
           const rot = this.data.rotation;
           this.el.object3D.rotation.set(
             THREE.MathUtils.degToRad(rot.x),
@@ -121,27 +117,24 @@
             THREE.MathUtils.degToRad(rot.z)
           );
 
-          // Aligner #grip sur l'origine de la main (0,0,0 en repère main)
+          // Aligner #grip sur l'origine de la main
           const gripEl = this.data.grip;
           if (gripEl && gripEl.object3D) {
-            // Position MONDE du grip
             const gripWorld = new THREE.Vector3();
             gripEl.object3D.updateWorldMatrix(true, true);
             gripEl.object3D.getWorldPosition(gripWorld);
 
-            // Convertir en coords LOCALES de la main
             const gripLocalInHand = gripWorld.clone();
             hand.object3D.worldToLocal(gripLocalInHand);
 
-            // Déplacer l'arme pour que #grip tombe exactement sur (0,0,0) de la main
             this.el.object3D.position.sub(gripLocalInHand);
           }
 
-          // Offset optionnel additionnel (si tu veux encore peaufiner au mm)
+          // Offset fin
           const pos = this.data.position;
           this.el.object3D.position.add(new THREE.Vector3(pos.x, pos.y, pos.z));
 
-          // Cacher la main pendant le hold
+          // Cacher la main
           if (this.data.hideHand) {
             try { hand.style.display = 'none'; } catch(e) { hand.setAttribute('visible', 'false'); }
           }
@@ -149,10 +142,10 @@
           this._held = true;
           this._handEl = hand;
 
-          // >>> NOUVEAU : avertir que le hold commence
+          // Signaler le hold
           this.el.emit('hold-start', { hand });
 
-          // relâche = gripdown
+          // Toggle release = gripdown
           hand.addEventListener('gripdown', this._onGripDown);
         },
         _onGripDown: function () {
@@ -171,6 +164,8 @@
           if (this.data.hideHand) {
             try { this._handEl.style.display = ''; } catch(e) { this._handEl.setAttribute('visible', 'true'); }
           }
+
+          // Signaler fin de hold
           this.el.emit('hold-end', { hand: this._handEl });
 
           this._handEl.removeEventListener('gripdown', this._onGripDown);
@@ -179,75 +174,225 @@
         }
       });
 
-      /* === Tir (depuis #muzzle, direction = getWorldDirection) === */
-      AFRAME.registerComponent('gun-shoot', {
+      /* === Effets: petite fabrique de particules "sparks" === */
+      function spawnParticles(sceneEl, worldPos, count = 12, life = 500) {
+        for (let i = 0; i < count; i++) {
+          const p = document.createElement('a-sphere');
+          p.setAttribute('radius', 0.02);
+          // Jaune / orange / rouge aléatoire
+          const colors = ['#FFD322', '#FF8A00', '#FF3B30'];
+          p.setAttribute('color', colors[Math.floor(Math.random()*colors.length)]);
+          p.setAttribute('material', 'opacity:1; transparent:true');
+          p.setAttribute('position', `${worldPos.x} ${worldPos.y} ${worldPos.z}`);
+
+          const dx = (Math.random() - 0.5) * 0.8;
+          const dy = Math.random() * 0.8;
+          const dz = (Math.random() - 0.5) * 0.8;
+
+          p.setAttribute('animation__move', `property: position; to: ${worldPos.x+dx} ${worldPos.y+dy} ${worldPos.z+dz}; dur: ${life}; easing: easeOutQuad`);
+          p.setAttribute('animation__fade', `property: material.opacity; from: 1; to: 0; dur: ${life}; easing: linear`);
+          sceneEl.appendChild(p);
+
+          setTimeout(() => { if (p.parentNode) p.parentNode.removeChild(p); }, life + 60);
+        }
+      }
+
+      /* === Cible : joue un son + particules, puis se détruit et notifie le spawner === */
+      AFRAME.registerComponent('target', {
         schema: {
-          speed: { type: 'number', default: 20 },
-          lifetime: { type: 'number', default: 4000 }
+          hitsound: { type: 'selector' },       // <audio id="hitSfx">
+          particles: { type: 'int', default: 12 },
+          life: { type: 'number', default: 500 }
         },
         init: function () {
-          this._onTriggerDown = this._onTriggerDown.bind(this);
-          this._onHoldStart   = this._onHoldStart.bind(this);
-          this._onHoldEnd     = this._onHoldEnd.bind(this);
-          this._hand = null;
-
-          this.muzzle = this.el.querySelector('#muzzle');
-
-          // >>> NOUVEAU : on réagit au "toggle-hold"
-          this.el.addEventListener('hold-start', this._onHoldStart);
-          this.el.addEventListener('hold-end',   this._onHoldEnd);
+          this.el.classList.add('target');
+          if (!this.el.hasAttribute('static-body')) this.el.setAttribute('static-body', '');
+          this._onBulletHit = this._onBulletHit.bind(this);
+          this.el.addEventListener('bullet-hit', this._onBulletHit);
         },
         remove: function () {
-          // Nettoyage au cas où
-          this.el.removeEventListener('hold-start', this._onHoldStart);
-          this.el.removeEventListener('hold-end',   this._onHoldEnd);
-          if (this._hand) {
-            this._hand.removeEventListener('triggerdown', this._onTriggerDown);
-            this._hand = null;
-          }
+          this.el.removeEventListener('bullet-hit', this._onBulletHit);
         },
-        _onHoldStart: function (evt) {
-          const hand = evt.detail && evt.detail.hand;
-          if (!hand) return;
-          this._hand = hand;
-          hand.addEventListener('triggerdown', this._onTriggerDown);
-        },
-        _onHoldEnd: function (evt) {
-          if (this._hand) {
-            this._hand.removeEventListener('triggerdown', this._onTriggerDown);
-            this._hand = null;
-          }
-        },
-        _onTriggerDown: function () {
-          const hold = this.el.components['toggle-hold'];
-          if (!hold || !hold._held) return; // sécurité
-
-          const muzzle = this.muzzle || this.el;
-          const bullet = document.createElement('a-sphere');
-          bullet.setAttribute('radius', 0.025);
-          bullet.setAttribute('color', 'yellow');
-          bullet.setAttribute('shadow', 'cast: true; receive: false');
-          bullet.setAttribute('dynamic-body', 'mass: 0.02; shape: sphere; sphereRadius: 0.025');
-
+        _onBulletHit: function (evt) {
+          const scene = this.el.sceneEl;
           const pos = new THREE.Vector3();
-          const dir = new THREE.Vector3(0, 0, -1);
-          muzzle.object3D.getWorldPosition(pos);
-          muzzle.object3D.getWorldDirection(dir);
-          dir.normalize();
-          pos.addScaledVector(dir, 0.04);
+          if (evt.detail && evt.detail.worldPos) pos.copy(evt.detail.worldPos);
+          else this.el.object3D.getWorldPosition(pos);
 
-          bullet.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
-          this.el.sceneEl.appendChild(bullet);
+          // Son 3D au point d'impact (entité éphémère)
+          if (this.data.hitsound) {
+            const s = document.createElement('a-entity');
+            s.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
+            s.setAttribute('sound',
+              `src: #${this.data.hitsound.id}; autoplay: true; positional: true; 
+               volume: 0.7; refDistance: 1.2; rolloffFactor: 2.0; distanceModel: inverse`);
+            scene.appendChild(s);
+            setTimeout(() => { if (s.parentNode) s.parentNode.removeChild(s); }, 1500);
+          }
 
-          const speed = this.data.speed;
-          bullet.addEventListener('body-loaded', () => {
-            bullet.setAttribute('velocity', `${dir.x * speed} ${dir.y * speed} ${dir.z * speed}`);
-          });
+          // Particules
+          spawnParticles(scene, pos, this.data.particles, this.data.life);
 
-          setTimeout(() => { if (bullet.parentNode) bullet.parentNode.removeChild(bullet); }, this.data.lifetime);
+          // Notifier destruction (le spawner tiendra le compte)
+          scene.emit('target-destroyed', { el: this.el });
+
+          // Détruire la cible
+          if (this.el.parentNode) this.el.parentNode.removeChild(this.el);
         }
       });
 
+      /* === Spawner : maintient N cibles dans une zone, respawn après délai === */
+      AFRAME.registerComponent('target-spawner', {
+        schema: {
+          areaMin: { type: 'vec3', default: { x: -3, y: 0.5, z: -6 } },
+          areaMax: { type: 'vec3', default: { x:  3, y: 1.5, z: -2 } },
+          maxTargets: { type: 'int', default: 5 },
+          respawnDelay: { type: 'number', default: 1500 },
+          shapes: { type: 'string', default: 'box,cone,cylinder' } // primitives possibles
+        },
+        init: function () {
+          this._targets = new Set();
+          this._onDestroyed = this._onDestroyed.bind(this);
+          this.el.sceneEl.addEventListener('target-destroyed', this._onDestroyed);
+          // Premier remplissage
+          this._fill();
+        },
+        remove: function () {
+          this.el.sceneEl.removeEventListener('target-destroyed', this._onDestroyed);
+        },
+        _randBetween(min, max) { return min + Math.random() * (max - min); },
+        _randomPos: function () {
+          const a = this.data.areaMin, b = this.data.areaMax;
+          return { x: this._randBetween(a.x, b.x), y: this._randBetween(a.y, b.y), z: this._randBetween(a.z, b.z) };
+        },
+        _spawnOne: function () {
+          const scene = this.el.sceneEl;
+          const shapes = this.data.shapes.split(',').map(s => s.trim());
+          const shape = shapes[Math.floor(Math.random() * shapes.length)];
+
+          // Créer une primitive
+          let t;
+          switch (shape) {
+            case 'cone':      t = document.createElement('a-cone'); break;
+            case 'cylinder':  t = document.createElement('a-cylinder'); break;
+            default:          t = document.createElement('a-box');
+          }
+
+          const pos = this._randomPos();
+          const scale = 0.6 + Math.random() * 0.6; // tailles 0.6 à 1.2
+          t.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
+          t.setAttribute('scale', `${scale} ${scale} ${scale}`);
+          t.setAttribute('rotation', `0 ${Math.floor(Math.random()*360)} 0`);
+          t.setAttribute('color', `hsl(${Math.floor(Math.random()*360)}, 70%, 55%)`);
+          t.setAttribute('shadow', 'cast:true; receive:true');
+
+          // Marquer comme cible + son à l'impact
+          t.setAttribute('target', 'hitsound: #hitSfx; particles: 14; life: 550');
+
+          // Physique pour collision avec les balles
+          t.setAttribute('static-body', '');
+
+          scene.appendChild(t);
+          this._targets.add(t);
+        },
+        _fill: function () {
+          while (this._targets.size < this.data.maxTargets) this._spawnOne();
+        },
+        _onDestroyed: function (e) {
+          const el = e.detail && e.detail.el;
+          if (el && this._targets.has(el)) {
+            this._targets.delete(el);
+            // Respawn après délai
+            setTimeout(() => this._fill(), this.data.respawnDelay);
+          }
+        }
+      });
+
+      /* === Tir (depuis #muzzle) — MAJ: les balles détectent l'impact et préviennent la cible === */
+      AFRAME.registerComponent('gun-shoot', {
+        schema: { speed: {type:'number', default:20}, lifetime: {type:'number', default:4000} },
+        init: function () {
+            this._onTriggerDown = this._onTriggerDown.bind(this);
+            this._onHoldStart   = this._onHoldStart.bind(this);
+            this._onHoldEnd     = this._onHoldEnd.bind(this);
+            this._hand = null;
+
+            this.muzzle = this.el.querySelector('#muzzle');
+            this.shotAudioEl = this.el.querySelector('#shotAudio');   // >>> NOUVEAU
+
+            this.el.addEventListener('hold-start', this._onHoldStart);
+            this.el.addEventListener('hold-end',   this._onHoldEnd);
+        },
+        remove: function () {
+            this.el.removeEventListener('hold-start', this._onHoldStart);
+            this.el.removeEventListener('hold-end',   this._onHoldEnd);
+            if (this._hand) {
+            this._hand.removeEventListener('triggerdown', this._onTriggerDown);
+            this._hand = null;
+            }
+        },
+        _onHoldStart: function (evt) {
+            const hand = evt.detail && evt.detail.hand;
+            if (!hand) return;
+            this._hand = hand;
+            hand.addEventListener('triggerdown', this._onTriggerDown);
+        },
+        _onHoldEnd: function () {
+            if (this._hand) {
+            this._hand.removeEventListener('triggerdown', this._onTriggerDown);
+            this._hand = null;
+            }
+        },
+        _onTriggerDown: function () {
+            const hold = this.el.components['toggle-hold'];
+            if (!hold || !hold._held) return;
+
+            // >>> NOUVEAU : son de tir (coupe puis rejoue)
+            if (this.shotAudioEl && this.shotAudioEl.components && this.shotAudioEl.components.sound) {
+            const s = this.shotAudioEl.components.sound;
+            if (s.isPlaying) s.stopSound();
+            s.playSound();
+            }
+
+            // --- (le reste inchangé) création + tir de la balle ---
+            const muzzle = this.muzzle || this.el;
+            const bullet = document.createElement('a-sphere');
+            bullet.setAttribute('radius', 0.025);
+            bullet.setAttribute('color', 'yellow');
+            bullet.setAttribute('shadow', 'cast: true; receive: false');
+            bullet.setAttribute('dynamic-body', 'mass: 0.02; shape: sphere; sphereRadius: 0.025');
+
+            const pos = new THREE.Vector3();
+            const dir = new THREE.Vector3(0, 0, -1);
+            muzzle.object3D.getWorldPosition(pos);
+            muzzle.object3D.getWorldDirection(dir);
+            dir.normalize();
+            pos.addScaledVector(dir, 0.04);
+
+            bullet.setAttribute('position', `${pos.x} ${pos.y} ${pos.z}`);
+            this.el.sceneEl.appendChild(bullet);
+
+            let handled = false;
+            bullet.addEventListener('collide', (e) => {
+            if (handled) return;
+            const other = e.detail && e.detail.body && e.detail.body.el;
+            if (other && other.components && other.components['target']) {
+                const p = new THREE.Vector3();
+                bullet.object3D.getWorldPosition(p);
+                other.emit('bullet-hit', { worldPos: p });
+            }
+            handled = true;
+            if (bullet.parentNode) bullet.parentNode.removeChild(bullet);
+            });
+
+            const speed = this.data.speed;
+            bullet.addEventListener('body-loaded', () => {
+            bullet.setAttribute('velocity', `${dir.x * speed} ${dir.y * speed} ${dir.z * speed}`);
+            });
+
+            setTimeout(() => { if (bullet.parentNode) bullet.parentNode.removeChild(bullet); }, this.data.lifetime);
+        }
+        });
     </script>
   </head>
 
@@ -264,6 +409,11 @@
         <img id="skyTexture" src="./skynet.jpg" />
         <img id="groundTexture" src="./grass.jpg" />
         <a-asset-item id="gunModel" src="./assets/scene.gltf"></a-asset-item>
+
+        <!-- >>> AJOUT : son d'impact (mets ton fichier dans ./assets/) -->
+        <audio id="hitSfx" src="./assets/hit.mp3" preload="auto"></audio>
+        <audio id="shotSfx" src="./assets/shot.mp3" preload="auto"></audio>
+        <!-- Astuce: si Safari pose souci, utilise un .wav -->
       </a-assets>
 
       <!-- Lumières -->
@@ -309,7 +459,7 @@
       <a-box position="2.5 0.75 -1" width="1" height="0.1" depth="1" color="#8B4513"
              shadow="cast: true; receive: true" static-body></a-box>
 
-      <!-- === ARME (un seul entity qui porte la physique) === -->
+      <!-- === ARME === -->
       <a-entity id="gun"
         class="grabbable"
         position="2.531 1.2 -1.0"
@@ -322,20 +472,30 @@
         toggle-hold="rotation: 30 90 -60; grip: #grip; hideHand: true"
         gun-shoot="speed: 20; lifetime: 4000">
 
-        <!--
-          POINT GRIP = point exact (sur le modèle) où la main doit se positionner.
-          Ajuste ces 3 valeurs pour coller pile à ta crosse/gâchette.
-          Astuce: si la main est trop "au centre", diminue X/Y/Z petit à petit (0.01) jusqu’à ce que ça tombe juste.
-        -->
         <a-entity id="grip"   position="-1.485 -0.437 -0.02"></a-entity>
-
-        <!-- Muzzle (bout du canon) : garde tes valeurs si ça tirait bien droit -->
-        <a-entity id="muzzle" position="0.50 0.417 -0.015" rotation="0 90 0"></a-entity>
+        <a-entity id="muzzle" position="0.50 0.417 -0.015" rotation="0 90 0" sound="src: #shotSfx; 
+                                                                                    autoplay: false; 
+                                                                                    positional: true;
+                                                                                    poolSize: 1; 
+                                                                                    volume: 0.8;
+                                                                                    refDistance: 1.2; 
+                                                                                    rolloffFactor: 1.6; 
+                                                                                    distanceModel: inverse"></a-entity>
       </a-entity>
 
       <!-- Sol -->
       <a-plane position="0 0 -1" rotation="-90 0 0" width="100" height="100" src="#groundTexture"
                shadow="cast: false; receive: true" static-body></a-plane>
+
+      <!-- >>> AJOUT : Spawner de cibles (zone + quotas + délai de respawn) -->
+      <a-entity id="targetSpawner"
+        target-spawner="
+          areaMin: -3 0.5 -6;
+          areaMax:  3 1.5 -2;
+          maxTargets: 6;
+          respawnDelay: 1200;
+          shapes: box,cone,cylinder">
+      </a-entity>
 
       <a-sky src="#skyTexture"></a-sky>
     </a-scene>
