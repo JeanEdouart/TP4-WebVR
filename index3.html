@@ -77,18 +77,16 @@
         }
       });
 
-      /* === Toggle-hold avec ALIGNEMENT SUR #grip + VITESSE DE LANCER ===
-         - garde ton angle via 'rotation' (ici 0 0 0 car tu as déjà calé le modèle)
-         - aligne #grip sous l'origine de la main
-         - pendant le hold : on échantillonne vitesse/ang.vitesse
-         - à la relâche (2e gripdown) : on restaure la physique + on applique ces vitesses
-         - émet 'held-start' / 'held-end' pour que le tir n’ait PAS besoin de maintenir le grip
+      /* === Toggle-hold avec ALIGNEMENT SUR #grip ===
+         - garde ton angle via 'rotation' (parfait)
+         - aligne le point #grip exactement sous l'origine de la main
+         - physique désactivée pendant hold (anti-jitter), restaurée à la relâche
       */
       AFRAME.registerComponent('toggle-hold', {
         schema: {
-          position: { type: 'vec3', default: { x: 0, y: 0, z: 0 } },
-          rotation: { type: 'vec3', default: { x: 0, y: 0, z: 0 } },
-          grip:     { type: 'selector', default: null },
+          position: { type: 'vec3', default: { x: 0, y: 0, z: 0 } }, // offset additionnel optionnel
+          rotation: { type: 'vec3', default: { x: 0, y: 0, z: 0  } }, // ton angle "parfait"
+          grip:     { type: 'selector', default: null }, // <a-entity id="grip"> sous le modèle
           hideHand: { type: 'boolean', default: true }
         },
         init: function () {
@@ -96,38 +94,10 @@
           this._handEl = null;
           this._savedDynamic = null;
 
-          // pour le lancer
-          this._prevPos = new THREE.Vector3();
-          this._prevQuat = new THREE.Quaternion();
-          this._lastVel = new THREE.Vector3(0,0,0);
-          this._lastAngVel = new THREE.Vector3(0,0,0);
-
           this._onGrabStart = this._onGrabStart.bind(this);
           this._onGripDown  = this._onGripDown.bind(this);
+
           this.el.addEventListener('grab-start', this._onGrabStart);
-        },
-        tick: function (time, dt) {
-          if (!this._held || dt <= 0) return;
-          const dtSec = dt / 1000;
-
-          // Vitesse linéaire (monde)
-          const currPos = new THREE.Vector3();
-          this.el.object3D.getWorldPosition(currPos);
-          this._lastVel.copy(currPos).sub(this._prevPos).multiplyScalar(1 / dtSec);
-          this._prevPos.copy(currPos);
-
-          // Vitesse angulaire (monde)
-          const currQuat = new THREE.Quaternion();
-          this.el.object3D.getWorldQuaternion(currQuat);
-          const dq = currQuat.clone().multiply(this._prevQuat.clone().invert()); // q_curr * q_prev^-1
-          let axis = new THREE.Vector3(0,0,1), angle = 0;
-          dq.normalize(); // éviter dérive
-          angle = 2 * Math.acos(THREE.MathUtils.clamp(dq.w, -1, 1));
-          const s = Math.sqrt(1 - dq.w * dq.w);
-          if (s > 0.0001) axis.set(dq.x / s, dq.y / s, dq.z / s);
-          else axis.set(1, 0, 0); // axe quelconque si très petit angle
-          this._lastAngVel.copy(axis.multiplyScalar(angle / dtSec)); // rad/s
-          this._prevQuat.copy(currQuat);
         },
         _onGrabStart: function (evt) {
           if (this._held) return;
@@ -143,7 +113,7 @@
           // Attacher l'objet dans la main
           hand.object3D.attach(this.el.object3D);
 
-          // Appliquer orientation ergonomique si besoin
+          // Appliquer l'orientation ergonomique
           const rot = this.data.rotation;
           this.el.object3D.rotation.set(
             THREE.MathUtils.degToRad(rot.x),
@@ -151,24 +121,25 @@
             THREE.MathUtils.degToRad(rot.z)
           );
 
-          // Aligner #grip à (0,0,0) de la main
+          // Aligner #grip sur l'origine de la main (0,0,0 en repère main)
           const gripEl = this.data.grip;
           if (gripEl && gripEl.object3D) {
+            // Position MONDE du grip
             const gripWorld = new THREE.Vector3();
             gripEl.object3D.updateWorldMatrix(true, true);
             gripEl.object3D.getWorldPosition(gripWorld);
+
+            // Convertir en coords LOCALES de la main
             const gripLocalInHand = gripWorld.clone();
             hand.object3D.worldToLocal(gripLocalInHand);
+
+            // Déplacer l'arme pour que #grip tombe exactement sur (0,0,0) de la main
             this.el.object3D.position.sub(gripLocalInHand);
           }
 
-          // Offset optionnel
+          // Offset optionnel additionnel (si tu veux encore peaufiner au mm)
           const pos = this.data.position;
           this.el.object3D.position.add(new THREE.Vector3(pos.x, pos.y, pos.z));
-
-          // État de référence pour le sampling de vitesse
-          this.el.object3D.getWorldPosition(this._prevPos);
-          this.el.object3D.getWorldQuaternion(this._prevQuat);
 
           // Cacher la main pendant le hold
           if (this.data.hideHand) {
@@ -178,10 +149,10 @@
           this._held = true;
           this._handEl = hand;
 
-          // Tir sans maintenir le grip : événement custom
-          this.el.emit('held-start', {hand});
+          // >>> NOUVEAU : avertir que le hold commence
+          this.el.emit('hold-start', { hand });
 
-          // Relâche = prochain gripdown
+          // relâche = gripdown
           hand.addEventListener('gripdown', this._onGripDown);
         },
         _onGripDown: function () {
@@ -191,49 +162,24 @@
           this._handEl.sceneEl.object3D.attach(this.el.object3D);
 
           // Restaurer la physique
-          let needVelocityApply = false;
           if (this._savedDynamic) {
             this.el.setAttribute('dynamic-body', this._savedDynamic);
             this._savedDynamic = null;
-            needVelocityApply = true;
           }
 
-          // Réafficher la main
+          // Rendre la main visible
           if (this.data.hideHand) {
             try { this._handEl.style.display = ''; } catch(e) { this._handEl.setAttribute('visible', 'true'); }
           }
+          this.el.emit('hold-end', { hand: this._handEl });
 
-          // Tir sans grip : événement custom (permet à gun-shoot de se désabonner)
-          const hand = this._handEl;
-          this.el.emit('held-end', {hand});
-
-          // Appliquer la vitesse de lancer une fois le body recréé
-          if (needVelocityApply) {
-            const lin = this._lastVel.clone();
-            const ang = this._lastAngVel.clone();
-
-            const apply = () => {
-              // setAttribute géré par aframe-physics-system -> Cannon
-              this.el.setAttribute('velocity', `${lin.x} ${lin.y} ${lin.z}`);
-              this.el.setAttribute('angularVelocity', `${ang.x} ${ang.y} ${ang.z}`);
-            };
-
-            // si le body est déjà prêt, applique tout de suite ; sinon, à 'body-loaded'
-            if (this.el.body) apply();
-            else {
-              const onLoaded = () => { apply(); this.el.removeEventListener('body-loaded', onLoaded); };
-              this.el.addEventListener('body-loaded', onLoaded);
-            }
-          }
-
-          // cleanup
           this._handEl.removeEventListener('gripdown', this._onGripDown);
           this._held = false;
           this._handEl = null;
         }
       });
 
-      /* === Tir: abonné aux événements 'held-start' / 'held-end' (plus besoin de maintenir le grip) === */
+      /* === Tir (depuis #muzzle, direction = getWorldDirection) === */
       AFRAME.registerComponent('gun-shoot', {
         schema: {
           speed: { type: 'number', default: 20 },
@@ -241,30 +187,40 @@
         },
         init: function () {
           this._onTriggerDown = this._onTriggerDown.bind(this);
-          this._boundHand = null;
+          this._onHoldStart   = this._onHoldStart.bind(this);
+          this._onHoldEnd     = this._onHoldEnd.bind(this);
+          this._hand = null;
+
           this.muzzle = this.el.querySelector('#muzzle');
 
-          // s'abonner/désabonner au bon moment (quand l'arme est tenue)
-          this.el.addEventListener('held-start', evt => {
-            const hand = evt.detail && evt.detail.hand;
-            if (hand && !this._boundHand) {
-              hand.addEventListener('triggerdown', this._onTriggerDown);
-              this._boundHand = hand;
-            }
-          });
-          this.el.addEventListener('held-end', evt => {
-            const hand = evt.detail && evt.detail.hand;
-            if (hand && this._boundHand === hand) {
-              hand.removeEventListener('triggerdown', this._onTriggerDown);
-              this._boundHand = null;
-            }
-          });
-
-          // IMPORTANT : on ignore 'grab-end' de super-hands (sinon tirerait seulement grip maintenu)
+          // >>> NOUVEAU : on réagit au "toggle-hold"
+          this.el.addEventListener('hold-start', this._onHoldStart);
+          this.el.addEventListener('hold-end',   this._onHoldEnd);
+        },
+        remove: function () {
+          // Nettoyage au cas où
+          this.el.removeEventListener('hold-start', this._onHoldStart);
+          this.el.removeEventListener('hold-end',   this._onHoldEnd);
+          if (this._hand) {
+            this._hand.removeEventListener('triggerdown', this._onTriggerDown);
+            this._hand = null;
+          }
+        },
+        _onHoldStart: function (evt) {
+          const hand = evt.detail && evt.detail.hand;
+          if (!hand) return;
+          this._hand = hand;
+          hand.addEventListener('triggerdown', this._onTriggerDown);
+        },
+        _onHoldEnd: function (evt) {
+          if (this._hand) {
+            this._hand.removeEventListener('triggerdown', this._onTriggerDown);
+            this._hand = null;
+          }
         },
         _onTriggerDown: function () {
-          const th = this.el.components['toggle-hold'];
-          if (!th || !th._held) return; // sécurité
+          const hold = this.el.components['toggle-hold'];
+          if (!hold || !hold._held) return; // sécurité
 
           const muzzle = this.muzzle || this.el;
           const bullet = document.createElement('a-sphere');
@@ -291,6 +247,7 @@
           setTimeout(() => { if (bullet.parentNode) bullet.parentNode.removeChild(bullet); }, this.data.lifetime);
         }
       });
+
     </script>
   </head>
 
@@ -352,7 +309,7 @@
       <a-box position="2.5 0.75 -1" width="1" height="0.1" depth="1" color="#8B4513"
              shadow="cast: true; receive: true" static-body></a-box>
 
-      <!-- === ARME (porte la physique) === -->
+      <!-- === ARME (un seul entity qui porte la physique) === -->
       <a-entity id="gun"
         class="grabbable"
         position="2.531 1.2 -1.0"
@@ -362,13 +319,17 @@
         gltf-model="#gunModel"
         dynamic-body="mass: 1; shape: box"
         grabbable="usePhysics: only; startButtons: gripdown, squeezestart; endButtons: gripup, squeezeend"
-        toggle-hold="rotation: 0 0 0; grip: #grip; hideHand: true"
+        toggle-hold="rotation: 30 90 -60; grip: #grip; hideHand: true"
         gun-shoot="speed: 20; lifetime: 4000">
 
-        <!-- Point de prise (ajuste très finement si besoin) -->
+        <!--
+          POINT GRIP = point exact (sur le modèle) où la main doit se positionner.
+          Ajuste ces 3 valeurs pour coller pile à ta crosse/gâchette.
+          Astuce: si la main est trop "au centre", diminue X/Y/Z petit à petit (0.01) jusqu’à ce que ça tombe juste.
+        -->
         <a-entity id="grip"   position="-1.485 -0.437 -0.02"></a-entity>
 
-        <!-- Muzzle (bout du canon) -->
+        <!-- Muzzle (bout du canon) : garde tes valeurs si ça tirait bien droit -->
         <a-entity id="muzzle" position="0.50 0.417 -0.015" rotation="0 90 0"></a-entity>
       </a-entity>
 
